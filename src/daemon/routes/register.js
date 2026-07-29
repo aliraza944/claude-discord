@@ -1,12 +1,12 @@
 import { sendJson, readJsonBody } from '../router.js';
 import { readConfig } from '../../config.js';
-import { createSessionThread } from '../../discord/threads.js';
+import { createSessionThread, formatThreadName } from '../../discord/threads.js';
 import { registerPending, attachThread } from '../sessions.js';
 
 /**
- * @param {{ discordClient?: object }} [deps]
+ * @param {{ discordClient?: object, now?: () => Date }} [deps]
  */
-export function registerRoutes({ discordClient } = {}) {
+export function registerRoutes({ discordClient, now = () => new Date() } = {}) {
   return {
     'POST /register': async (req, res) => {
       const body = await readJsonBody(req);
@@ -24,7 +24,8 @@ export function registerRoutes({ discordClient } = {}) {
       registerPending({ token, projectName, cwd, tmuxTarget });
 
       const config = readConfig();
-      const thread = await createSessionThread(discordClient, { channelId: config.channelId, name: projectName });
+      const name = formatThreadName(projectName, now());
+      const thread = await createSessionThread(discordClient, { channelId: config.channelId, name });
       attachThread(token, thread.id);
 
       sendJson(res, 200, { token, threadId: thread.id });

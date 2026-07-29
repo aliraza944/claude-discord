@@ -90,6 +90,60 @@ describe('POST /register', () => {
     }
   });
 
+  it('names the created thread using the shared date/time-suffix format', async () => {
+    const { writeConfig } = await import('../src/config.js');
+    writeConfig({ port: 0, token: 'bot-token', guildId: 'g1', channelId: 'chan-1' });
+
+    const discordClient = createFakeDiscordClient();
+    const server = await startServer({ discordClient, now: () => new Date(2026, 6, 29, 9, 5, 0) });
+    const { port } = server.address();
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/register`, {
+        method: 'POST',
+        body: JSON.stringify({ token: 'tok-1', projectName: 'my-project', cwd: '/home/x/my-project', tmuxTarget: 'tm-1' }),
+      });
+      const body = await res.json();
+      const record = findByToken('tok-1');
+      expect(record.threadId).toBe(body.threadId);
+
+      const thread = await discordClient.channels.fetch(body.threadId);
+      expect(thread.name).toBe('my-project — 2026-07-29 09:05');
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('starting two sessions against the same project at different times produces two distinctly-named threads', async () => {
+    const { writeConfig } = await import('../src/config.js');
+    writeConfig({ port: 0, token: 'bot-token', guildId: 'g1', channelId: 'chan-1' });
+
+    const discordClient = createFakeDiscordClient();
+    const times = [new Date(2026, 6, 29, 9, 5, 0), new Date(2026, 6, 29, 9, 6, 0)];
+    let call = 0;
+    const server = await startServer({ discordClient, now: () => times[call++] });
+    const { port } = server.address();
+
+    try {
+      const resA = await fetch(`http://127.0.0.1:${port}/register`, {
+        method: 'POST',
+        body: JSON.stringify({ token: 'tok-a', projectName: 'my-project', cwd: '/home/x/my-project', tmuxTarget: 'tm-a' }),
+      });
+      const resB = await fetch(`http://127.0.0.1:${port}/register`, {
+        method: 'POST',
+        body: JSON.stringify({ token: 'tok-b', projectName: 'my-project', cwd: '/home/x/my-project', tmuxTarget: 'tm-b' }),
+      });
+      const bodyA = await resA.json();
+      const bodyB = await resB.json();
+
+      const threadA = await discordClient.channels.fetch(bodyA.threadId);
+      const threadB = await discordClient.channels.fetch(bodyB.threadId);
+      expect(threadA.name).not.toBe(threadB.name);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   it('two concurrent registrations against different projects produce two distinct threads and independent registry entries', async () => {
     const { writeConfig } = await import('../src/config.js');
     writeConfig({ port: 0, token: 'bot-token', guildId: 'g1', channelId: 'chan-1' });
