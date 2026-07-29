@@ -1,0 +1,26 @@
+{
+  "name": "claude-discord",
+  "version": "0.1.0",
+  "description": "Two-way Discord control for Claude Code sessions",
+  "type": "module",
+  "bin": {
+    "claude-discord": "./bin/claude-discord.js",
+    "claude-discord-hook": "./bin/claude-discord-hook.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p jsconfig.json"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "discord.js": "^14.27.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}
