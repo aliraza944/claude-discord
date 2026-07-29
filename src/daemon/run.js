@@ -5,21 +5,24 @@ import { registerRoutes } from './routes/register.js';
 import { sessionStartRoutes } from './routes/session-start.js';
 import { permissionRequestRoutes } from './routes/permission-request.js';
 import { notificationRoutes } from './routes/notification.js';
+import { controlRoutes } from './routes/control.js';
 import { registerReactionHandlers } from '../discord/reactions.js';
 import { registerSteeringHandlers } from '../discord/steering.js';
+import { registerSlashCommandHandlers, registerSlashCommands } from '../discord/slashCommands.js';
 import { readConfig } from '../config.js';
 import { createDiscordClient } from '../discord/client.js';
 
 /**
  * Aggregates every route module into a single "METHOD /path" -> handler map.
- * Also wires up MessageReactionAdd (permission-request resolution) and
- * MessageCreate (steering) handling on `deps.discordClient`, if given. Later
- * tickets extend this with control routes.
+ * Also wires up MessageReactionAdd (permission-request resolution),
+ * MessageCreate (steering), and slash command (pause/resume) handling on
+ * `deps.discordClient`, if given.
  */
 export function buildRoutes(deps = {}) {
   if (deps.discordClient) {
     registerReactionHandlers(deps.discordClient);
     registerSteeringHandlers(deps.discordClient);
+    registerSlashCommandHandlers(deps.discordClient);
   }
   return {
     ...healthRoutes(deps),
@@ -28,6 +31,7 @@ export function buildRoutes(deps = {}) {
     ...sessionStartRoutes(deps),
     ...permissionRequestRoutes(deps),
     ...notificationRoutes(deps),
+    ...controlRoutes(),
   };
 }
 
@@ -49,9 +53,17 @@ export async function startDaemon({ port, deps = {} } = {}) {
   let discordClient = deps.discordClient;
   if (!discordClient && config.token) {
     discordClient = clientFactory();
-    discordClient.login(config.token).catch((err) => {
-      console.error('Discord login failed:', err.message);
-    });
+    discordClient.login(config.token).then(
+      () => {
+        if (!config.guildId) return;
+        registerSlashCommands(discordClient, { guildId: config.guildId }).catch((err) => {
+          console.error('Failed to register Discord slash commands:', err.message);
+        });
+      },
+      (err) => {
+        console.error('Discord login failed:', err.message);
+      }
+    );
   }
 
   const server = createDaemonServer({ ...deps, discordClient });

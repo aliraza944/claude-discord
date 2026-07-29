@@ -6,6 +6,7 @@ import { createDaemonServer } from '../src/daemon/run.js';
 import { createFakeDiscordClient } from './support/fakeDiscordClient.js';
 import { registerPending, attachThread, promoteToActive, resetSessions } from '../src/daemon/sessions.js';
 import { createSessionThread } from '../src/discord/threads.js';
+import { setPaused } from '../src/state.js';
 
 let home;
 
@@ -67,6 +68,26 @@ describe('POST /hook/notification', () => {
         body: JSON.stringify({ session_id: 'unknown-session', message: 'idle' }),
       });
       expect(res.status).toBe(200);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('suppresses the notification (200 ok, no discord message) while globally paused', async () => {
+    await setPaused(true);
+    const discordClient = createFakeDiscordClient();
+    const thread = await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
+
+    const server = await startServer(discordClient);
+    const { port } = server.address();
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/hook/notification`, {
+        method: 'POST',
+        body: JSON.stringify({ session_id: 'sess-1', message: 'idle' }),
+      });
+      expect(res.status).toBe(200);
+      expect(thread.messages).toHaveLength(0);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }

@@ -70,6 +70,16 @@ export function createFakeDiscordClient() {
     fetch: async (id) => channelsById.get(id) ?? makeChannel(id),
   };
 
+  client.setCommandsCalls = [];
+  client.application = {
+    commands: {
+      set: async (commands, guildId) => {
+        client.setCommandsCalls.push({ commands, guildId });
+        return commands;
+      },
+    },
+  };
+
   /** Test helper: simulates a (non-bot) user adding a reaction to a message. */
   client.simulateReaction = (messageId, emojiName, userId = 'fake-user') => {
     const reaction = { emoji: { name: emojiName }, message: { id: messageId } };
@@ -84,6 +94,24 @@ export function createFakeDiscordClient() {
     message.author = { id: authorId, bot };
     client.emit('messageCreate', message);
     return message;
+  };
+
+  /**
+   * Test helper: simulates a user invoking a slash command. Returns the fake
+   * interaction, whose `replies` array records every interaction.reply(...)
+   * call so a test can await handler completion before asserting on it.
+   */
+  client.simulateSlashCommand = (commandName, { userId = 'fake-user' } = {}) => {
+    const interaction = new EventEmitter();
+    interaction.commandName = commandName;
+    interaction.user = { id: userId, bot: false };
+    interaction.replies = [];
+    interaction.isChatInputCommand = () => true;
+    interaction.reply = async (content) => {
+      interaction.replies.push(content);
+    };
+    client.emit('interactionCreate', interaction);
+    return interaction;
   };
 
   return client;
