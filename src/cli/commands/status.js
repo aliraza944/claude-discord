@@ -12,7 +12,22 @@ export async function statusCommand() {
 
   if (!config.token) {
     console.log('bot: not configured (run `claude-discord init`)');
-  } else {
-    console.log('bot: unknown (wired up once the Discord client is connected)');
+    return;
+  }
+
+  if (!daemon.running) {
+    console.log('bot: unknown (daemon not running)');
+    return;
+  }
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${config.port}/status`, {
+      signal: AbortSignal.timeout(1500),
+    });
+    if (!res.ok) throw new Error(`daemon returned ${res.status}`);
+    const body = await res.json();
+    console.log(`bot: ${body.botOnline ? 'online' : 'offline'}`);
+  } catch (err) {
+    console.log(`bot: unreachable (${err.message})`);
   }
 }

@@ -1,6 +1,8 @@
 import { createServer } from './router.js';
 import { healthRoutes } from './routes/health.js';
+import { statusRoutes } from './routes/status.js';
 import { readConfig } from '../config.js';
+import { createDiscordClient } from '../discord/client.js';
 
 /**
  * Aggregates every route module into a single "METHOD /path" -> handler map.
@@ -10,6 +12,7 @@ import { readConfig } from '../config.js';
 export function buildRoutes(deps = {}) {
   return {
     ...healthRoutes(deps),
+    ...statusRoutes(deps),
   };
 }
 
@@ -18,14 +21,29 @@ export function createDaemonServer(deps = {}) {
 }
 
 /**
- * Boots the daemon's HTTP server on the configured port. Discord client
- * connection is wired in by ticket 02.
- * @param {{ port?: number, deps?: object }} [options]
+ * Boots the daemon's HTTP server on the configured port, and connects the
+ * Discord client using the saved config (unless a client/factory is injected
+ * via `deps`, which tests use to avoid a real gateway connection).
+ * @param {{ port?: number, deps?: { discordClient?: object, createDiscordClient?: () => object } }} [options]
  */
 export async function startDaemon({ port, deps = {} } = {}) {
   const config = readConfig();
   const listenPort = port ?? config.port ?? 4790;
-  const server = createDaemonServer(deps);
+
+  const clientFactory = deps.createDiscordClient ?? createDiscordClient;
+  let discordClient = deps.discordClient;
+  if (!discordClient && config.token) {
+    discordClient = clientFactory();
+    discordClient.login(config.token).catch((err) => {
+      console.error('Discord login failed:', err.message);
+    });
+  }
+
+  const server = createDaemonServer({ ...deps, discordClient });
+  // Stashed for callers (CLI shutdown, /status route, tests) to reach the
+  // live client without threading it through separately.
+  /** @type {any} */ (server).discordClient = discordClient;
+
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(listenPort, '127.0.0.1', () => {

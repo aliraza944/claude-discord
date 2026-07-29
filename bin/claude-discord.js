@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { statusCommand } from '../src/cli/commands/status.js';
+import { initCommand } from '../src/cli/commands/init.js';
 import {
   daemonStartCommand,
   daemonStopCommand,
@@ -16,6 +17,14 @@ program
   .command('status')
   .description('Show daemon, pause, and Discord bot connection status')
   .action(statusCommand);
+
+program
+  .command('init')
+  .description('Configure the Discord bot and install the required Claude Code hooks')
+  .option('--token <token>', 'Discord bot token')
+  .option('--guild <guildId>', 'Discord guild (server) ID')
+  .option('--channel <channelId>', 'Discord channel ID')
+  .action((opts) => initCommand({ token: opts.token, guildId: opts.guild, channelId: opts.channel }));
 
 const daemon = program.command('daemon').description('Manage the background daemon process');
 

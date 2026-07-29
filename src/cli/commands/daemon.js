@@ -49,6 +49,7 @@ export async function daemonRunCommand() {
   console.log(`daemon listening on port ${port}`);
 
   const shutdown = () => {
+    /** @type {any} */ (server).discordClient?.destroy();
     server.close(() => process.exit(0));
   };
   process.on('SIGTERM', shutdown);

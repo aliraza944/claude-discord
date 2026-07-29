@@ -5,6 +5,14 @@ export function homeDir() {
   return process.env.CLAUDE_DISCORD_HOME || path.join(os.homedir(), '.claude-discord');
 }
 
+export function claudeHomeDir() {
+  return process.env.CLAUDE_DISCORD_CLAUDE_HOME || path.join(os.homedir(), '.claude');
+}
+
+export function claudeSettingsPath() {
+  return path.join(claudeHomeDir(), 'settings.json');
+}
+
 export function statePath() {
   return path.join(homeDir(), 'state.json');
 }
