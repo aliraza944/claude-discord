@@ -146,6 +146,190 @@ describe('POST /hook/permission-request', () => {
     }
   });
 
+  it('renders the Bash command (and description, if present) in a code block', async () => {
+    const discordClient = createFakeDiscordClient();
+    const thread = await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
+
+    const server = await startServer(discordClient, { safetyTimeoutMs: 400 });
+    const { port } = server.address();
+
+    try {
+      const responsePromise = fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
+        method: 'POST',
+        body: JSON.stringify({
+          session_id: 'sess-1',
+          tool_name: 'Bash',
+          tool_input: { command: 'rm -rf build', description: 'Clean the build directory' },
+        }),
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const message = thread.messages[0];
+      expect(message.content).toContain('Clean the build directory');
+      expect(message.content).toContain('```\nrm -rf build\n```');
+
+      discordClient.simulateReaction(message.id, '✅');
+      await responsePromise;
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('renders the file path plus a diff-style preview for Edit', async () => {
+    const discordClient = createFakeDiscordClient();
+    const thread = await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
+
+    const server = await startServer(discordClient, { safetyTimeoutMs: 400 });
+    const { port } = server.address();
+
+    try {
+      const responsePromise = fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
+        method: 'POST',
+        body: JSON.stringify({
+          session_id: 'sess-1',
+          tool_name: 'Edit',
+          tool_input: { file_path: '/repo/src/index.js', old_string: 'const a = 1;', new_string: 'const a = 2;' },
+        }),
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const message = thread.messages[0];
+      expect(message.content).toContain('/repo/src/index.js');
+      expect(message.content).toContain('- const a = 1;');
+      expect(message.content).toContain('+ const a = 2;');
+
+      discordClient.simulateReaction(message.id, '✅');
+      await responsePromise;
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('renders the file path plus a diff-style preview of every edit for MultiEdit', async () => {
+    const discordClient = createFakeDiscordClient();
+    const thread = await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
+
+    const server = await startServer(discordClient, { safetyTimeoutMs: 400 });
+    const { port } = server.address();
+
+    try {
+      const responsePromise = fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
+        method: 'POST',
+        body: JSON.stringify({
+          session_id: 'sess-1',
+          tool_name: 'MultiEdit',
+          tool_input: {
+            file_path: '/repo/src/index.js',
+            edits: [
+              { old_string: 'foo', new_string: 'bar' },
+              { old_string: 'baz', new_string: 'qux' },
+            ],
+          },
+        }),
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const message = thread.messages[0];
+      expect(message.content).toContain('/repo/src/index.js');
+      expect(message.content).toContain('- foo');
+      expect(message.content).toContain('+ bar');
+      expect(message.content).toContain('- baz');
+      expect(message.content).toContain('+ qux');
+
+      discordClient.simulateReaction(message.id, '✅');
+      await responsePromise;
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('renders the file path plus a content preview for Write', async () => {
+    const discordClient = createFakeDiscordClient();
+    const thread = await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
+
+    const server = await startServer(discordClient, { safetyTimeoutMs: 400 });
+    const { port } = server.address();
+
+    try {
+      const responsePromise = fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
+        method: 'POST',
+        body: JSON.stringify({
+          session_id: 'sess-1',
+          tool_name: 'Write',
+          tool_input: { file_path: '/repo/notes.txt', content: 'hello world' },
+        }),
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const message = thread.messages[0];
+      expect(message.content).toContain('/repo/notes.txt');
+      expect(message.content).toContain('hello world');
+
+      discordClient.simulateReaction(message.id, '✅');
+      await responsePromise;
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('renders tool name plus pretty-printed tool_input JSON for any other tool', async () => {
+    const discordClient = createFakeDiscordClient();
+    const thread = await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
+
+    const server = await startServer(discordClient, { safetyTimeoutMs: 400 });
+    const { port } = server.address();
+
+    try {
+      const responsePromise = fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
+        method: 'POST',
+        body: JSON.stringify({
+          session_id: 'sess-1',
+          tool_name: 'WebFetch',
+          tool_input: { url: 'https://example.com' },
+        }),
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const message = thread.messages[0];
+      expect(message.content).toContain('**WebFetch**');
+      expect(message.content).toContain('"url": "https://example.com"');
+
+      discordClient.simulateReaction(message.id, '✅');
+      await responsePromise;
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('truncates a preview exceeding the safe max length with an explicit marker', async () => {
+    const discordClient = createFakeDiscordClient();
+    const thread = await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
+
+    const server = await startServer(discordClient, { safetyTimeoutMs: 400 });
+    const { port } = server.address();
+
+    try {
+      const responsePromise = fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
+        method: 'POST',
+        body: JSON.stringify({
+          session_id: 'sess-1',
+          tool_name: 'Bash',
+          tool_input: { command: 'x'.repeat(5000) },
+        }),
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const message = thread.messages[0];
+      expect(message.content).toContain('…truncated');
+      expect(message.content.length).toBeLessThan(2000);
+
+      discordClient.simulateReaction(message.id, '✅');
+      await responsePromise;
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   it('a reaction on one session thread message never resolves another session pending request', async () => {
     const discordClient = createFakeDiscordClient();
     const threadA = await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
