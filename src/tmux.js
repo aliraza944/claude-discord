@@ -39,3 +39,18 @@ export async function capturePane(target) {
   const { stdout } = await execFileAsync('tmux', ['capture-pane', '-t', target, '-p']);
   return stdout;
 }
+
+/**
+ * Returns the `#S:#I.#P` target of the pane this process is running in,
+ * resolved by tmux itself from the `TMUX` environment variable it exports
+ * into every pane it creates — not from any argument. Rejects if `TMUX`
+ * isn't set, since tmux's own fallback (picking some session on the default
+ * server) would otherwise silently return the wrong pane's target.
+ */
+export async function currentPaneTarget() {
+  if (!process.env.TMUX) {
+    throw new Error('Not running inside a tmux session (TMUX environment variable is not set)');
+  }
+  const { stdout } = await execFileAsync('tmux', ['display-message', '-p', '#S:#I.#P']);
+  return stdout.trim();
+}
