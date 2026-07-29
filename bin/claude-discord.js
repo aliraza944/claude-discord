@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import { statusCommand } from '../src/cli/commands/status.js';
 import { initCommand } from '../src/cli/commands/init.js';
+import { startCommand } from '../src/cli/commands/start.js';
 import {
   daemonStartCommand,
   daemonStopCommand,
@@ -25,6 +26,11 @@ program
   .option('--guild <guildId>', 'Discord guild (server) ID')
   .option('--channel <channelId>', 'Discord channel ID')
   .action((opts) => initCommand({ token: opts.token, guildId: opts.guild, channelId: opts.channel }));
+
+program
+  .command('start <path>')
+  .description('Launch a Claude Code session in tmux, wired up for Discord control')
+  .action((path) => startCommand(path));
 
 const daemon = program.command('daemon').description('Manage the background daemon process');
 

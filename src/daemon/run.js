@@ -1,18 +1,29 @@
 import { createServer } from './router.js';
 import { healthRoutes } from './routes/health.js';
 import { statusRoutes } from './routes/status.js';
+import { registerRoutes } from './routes/register.js';
+import { sessionStartRoutes } from './routes/session-start.js';
+import { permissionRequestRoutes } from './routes/permission-request.js';
+import { registerReactionHandlers } from '../discord/reactions.js';
 import { readConfig } from '../config.js';
 import { createDiscordClient } from '../discord/client.js';
 
 /**
  * Aggregates every route module into a single "METHOD /path" -> handler map.
- * Later tickets extend this with register/session-start/permission-request/
- * notification/control routes.
+ * Also wires up MessageReactionAdd handling on `deps.discordClient` (if
+ * given), since that's the mechanism permission-request responses resolve
+ * through. Later tickets extend this with notification/control routes.
  */
 export function buildRoutes(deps = {}) {
+  if (deps.discordClient) {
+    registerReactionHandlers(deps.discordClient);
+  }
   return {
     ...healthRoutes(deps),
     ...statusRoutes(deps),
+    ...registerRoutes(deps),
+    ...sessionStartRoutes(deps),
+    ...permissionRequestRoutes(deps),
   };
 }
 

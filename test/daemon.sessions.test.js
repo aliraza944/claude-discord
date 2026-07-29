@@ -1,0 +1,70 @@
+import { describe, it, expect, afterEach } from 'vitest';
+import {
+  registerPending,
+  attachThread,
+  promoteToActive,
+  findByToken,
+  findBySessionId,
+  findByKey,
+  resetSessions,
+} from '../src/daemon/sessions.js';
+
+afterEach(() => {
+  resetSessions();
+});
+
+describe('daemon/sessions.js', () => {
+  it('registers a pending session by token', () => {
+    registerPending({ token: 't1', projectName: 'proj-a', cwd: '/a', tmuxTarget: 'tm-a' });
+    const record = findByToken('t1');
+    expect(record).toMatchObject({
+      token: 't1',
+      projectName: 'proj-a',
+      cwd: '/a',
+      tmuxTarget: 'tm-a',
+      sessionId: null,
+      threadId: null,
+      status: 'pending',
+    });
+  });
+
+  it('attaches a thread id to the pending record', () => {
+    registerPending({ token: 't1', projectName: 'proj-a', cwd: '/a', tmuxTarget: 'tm-a' });
+    attachThread('t1', 'thread-1');
+    expect(findByToken('t1').threadId).toBe('thread-1');
+  });
+
+  it('promotes a pending registration to active by session_id, findable by either key', () => {
+    registerPending({ token: 't1', projectName: 'proj-a', cwd: '/a', tmuxTarget: 'tm-a' });
+    const promoted = promoteToActive('t1', 'sess-1');
+
+    expect(promoted.status).toBe('active');
+    expect(promoted.sessionId).toBe('sess-1');
+    expect(findByToken('t1')).toBe(promoted);
+    expect(findBySessionId('sess-1')).toBe(promoted);
+    expect(findByKey('t1')).toBe(promoted);
+    expect(findByKey('sess-1')).toBe(promoted);
+  });
+
+  it('returns null when promoting an unknown token', () => {
+    expect(promoteToActive('missing-token', 'sess-1')).toBeNull();
+  });
+
+  it('keeps two concurrently-registered sessions fully independent', () => {
+    registerPending({ token: 't1', projectName: 'proj-a', cwd: '/a', tmuxTarget: 'tm-a' });
+    registerPending({ token: 't2', projectName: 'proj-b', cwd: '/b', tmuxTarget: 'tm-b' });
+    attachThread('t1', 'thread-1');
+    attachThread('t2', 'thread-2');
+    promoteToActive('t1', 'sess-1');
+    promoteToActive('t2', 'sess-2');
+
+    expect(findBySessionId('sess-1')).toMatchObject({ token: 't1', threadId: 'thread-1' });
+    expect(findBySessionId('sess-2')).toMatchObject({ token: 't2', threadId: 'thread-2' });
+  });
+
+  it('returns null for unknown keys', () => {
+    expect(findByToken('nope')).toBeNull();
+    expect(findBySessionId('nope')).toBeNull();
+    expect(findByKey('nope')).toBeNull();
+  });
+});
