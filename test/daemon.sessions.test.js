@@ -6,6 +6,7 @@ import {
   findByToken,
   findBySessionId,
   findByKey,
+  findByThreadId,
   resetSessions,
 } from '../src/daemon/sessions.js';
 
@@ -66,5 +67,28 @@ describe('daemon/sessions.js', () => {
     expect(findByToken('nope')).toBeNull();
     expect(findBySessionId('nope')).toBeNull();
     expect(findByKey('nope')).toBeNull();
+  });
+
+  it('finds a session by its attached thread id, whether pending or active', () => {
+    registerPending({ token: 't1', projectName: 'proj-a', cwd: '/a', tmuxTarget: 'tm-a' });
+    attachThread('t1', 'thread-1');
+    expect(findByThreadId('thread-1')).toMatchObject({ token: 't1' });
+
+    promoteToActive('t1', 'sess-1');
+    expect(findByThreadId('thread-1')).toMatchObject({ token: 't1', sessionId: 'sess-1' });
+  });
+
+  it('a thread id only ever resolves to its own session, never another', () => {
+    registerPending({ token: 't1', projectName: 'proj-a', cwd: '/a', tmuxTarget: 'tm-a' });
+    registerPending({ token: 't2', projectName: 'proj-b', cwd: '/b', tmuxTarget: 'tm-b' });
+    attachThread('t1', 'thread-1');
+    attachThread('t2', 'thread-2');
+
+    expect(findByThreadId('thread-1')).toMatchObject({ token: 't1' });
+    expect(findByThreadId('thread-2')).toMatchObject({ token: 't2' });
+  });
+
+  it('returns null for an unknown thread id', () => {
+    expect(findByThreadId('no-such-thread')).toBeNull();
   });
 });

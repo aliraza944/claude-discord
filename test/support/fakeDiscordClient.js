@@ -77,5 +77,14 @@ export function createFakeDiscordClient() {
     client.emit('messageReactionAdd', reaction, user);
   };
 
+  /** Test helper: simulates a (non-bot, by default) user posting a message in a channel/thread. */
+  client.simulateMessage = ({ channelId, content, authorId = 'fake-user', bot = false }) => {
+    const message = makeMessage(content);
+    message.channelId = channelId;
+    message.author = { id: authorId, bot };
+    client.emit('messageCreate', message);
+    return message;
+  };
+
   return client;
 }

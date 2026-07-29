@@ -52,6 +52,14 @@ export function findByKey(key) {
   return byToken.get(key) ?? bySessionId.get(key) ?? null;
 }
 
+/** Looks up a session by its attached Discord thread id. */
+export function findByThreadId(threadId) {
+  for (const record of byToken.values()) {
+    if (record.threadId === threadId) return record;
+  }
+  return null;
+}
+
 /** Test-only: clears the registry so tests don't leak state across cases. */
 export function resetSessions() {
   byToken.clear();
