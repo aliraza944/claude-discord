@@ -32,7 +32,7 @@ export function buildHooksBlock(hookBinPath) {
     ],
     SessionStart: [
       {
-        matcher: 'startup|resume',
+        matcher: 'startup|resume|clear|compact',
         hooks: [{ type: 'command', command: commandFor(hookBinPath, 'session-start') }],
       },
     ],

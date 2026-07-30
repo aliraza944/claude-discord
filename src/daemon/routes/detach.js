@@ -27,9 +27,10 @@ export function detachRoutes({ discordClient } = {}) {
       stopFeedWatcher(session.sessionId);
 
       // Best-effort: the session is unregistered (and hook routing for it
-      // stops) even if there's no discordClient to tell the thread about it.
+      // stops) even if there's no discordClient to tell the thread about it,
+      // or the thread itself is already gone (e.g. deleted/archived).
       if (discordClient && session.threadId) {
-        await postToThread(discordClient, session.threadId, FAREWELL_MESSAGE);
+        await postToThread(discordClient, session.threadId, FAREWELL_MESSAGE).catch(() => {});
       }
 
       sendJson(res, 200, { detached: true, sessionId: session.sessionId, threadId: session.threadId });

@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import { readStateSync } from '../state.js';
 import { postToThread } from '../discord/threads.js';
 import { createTranscriptTail } from './transcriptTail.js';
@@ -73,21 +72,25 @@ async function postEntryMessages(entry, { threadId, discordClient }) {
  * Starts tailing `session.transcriptPath` for newly appended entries,
  * posting each qualifying one to `session.threadId` in order, as soon as
  * it's available. No-ops (no feed for this session) if the transcript
- * path/thread/client aren't available, the transcript file doesn't exist, or
- * a watcher is already running for this session.
+ * path/thread/client aren't available, or a watcher is already running for
+ * this session. The transcript file need not exist yet — on a `/clear`, the
+ * SessionStart hook can report the new path before Claude Code has created
+ * the file; `createTranscriptTail`'s poll loop tolerates that and starts
+ * picking up lines as soon as the file appears.
  * @param {{ sessionId: string, transcriptPath?: string|null, threadId?: string|null }} session
  * @param {object} discordClient
- * @param {{ pollMs?: number }} [opts]
+ * @param {{ pollMs?: number, startOffset?: number }} [opts] `startOffset` is
+ * forwarded to `createTranscriptTail` — see there for why a caller would set it.
  */
 export function startFeedWatcher(session, discordClient, opts = {}) {
   const sessionId = session?.sessionId;
   if (!sessionId || !session.transcriptPath || !session.threadId || !discordClient) return;
   if (watchersBySessionId.has(sessionId)) return;
-  if (!fs.existsSync(session.transcriptPath)) return;
 
   let chain = Promise.resolve();
   const tail = createTranscriptTail(session.transcriptPath, {
     pollMs: opts.pollMs,
+    startOffset: opts.startOffset,
     onLine: (line) => {
       chain = chain.then(async () => {
         let entry;

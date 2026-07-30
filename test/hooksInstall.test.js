@@ -37,7 +37,7 @@ describe('mergeHooksBlock', () => {
     expect(merged.Notification[0].matcher).toBe('agent_needs_input|idle_prompt|agent_completed');
     expect(merged.Notification[0].hooks[0].command).toContain('notification');
 
-    expect(merged.SessionStart[0].matcher).toBe('startup|resume');
+    expect(merged.SessionStart[0].matcher).toBe('startup|resume|clear|compact');
     expect(merged.SessionStart[0].hooks[0].command).toContain('session-start');
   });
 
@@ -73,6 +73,6 @@ describe('installHooks', () => {
 
     const settings = JSON.parse(readFileSync(claudeSettingsPath(), 'utf8'));
     expect(settings.someOtherSetting).toBe(true);
-    expect(settings.hooks.SessionStart[0].matcher).toBe('startup|resume');
+    expect(settings.hooks.SessionStart[0].matcher).toBe('startup|resume|clear|compact');
   });
 });

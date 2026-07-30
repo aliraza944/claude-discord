@@ -37,7 +37,7 @@ describe('initCommand', () => {
     expect(settings.hooks.Notification[0].matcher).toBe(
       'agent_needs_input|idle_prompt|agent_completed'
     );
-    expect(settings.hooks.SessionStart[0].matcher).toBe('startup|resume');
+    expect(settings.hooks.SessionStart[0].matcher).toBe('startup|resume|clear|compact');
 
     const printed = logSpy.mock.calls.flat().join('\n');
     expect(printed).toMatch(/Message Content/);

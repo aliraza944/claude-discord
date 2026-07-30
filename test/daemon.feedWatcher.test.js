@@ -174,11 +174,18 @@ describe('daemon/feedWatcher.js startFeedWatcher/stopFeedWatcher (real temp file
     expect(thread.messages.map((m) => m.content)).toEqual(['new']);
   });
 
-  it('no-ops when the transcript file does not exist', async () => {
-    const session = { sessionId: 'sess-1', transcriptPath: path.join(dir, 'missing.jsonl'), threadId: thread.id };
+  it('does not throw when the transcript file does not exist yet, and picks up lines once it is created', async () => {
+    const missingPath = path.join(dir, 'missing.jsonl');
+    const session = { sessionId: 'sess-1', transcriptPath: missingPath, threadId: thread.id };
     expect(() => startFeedWatcher(session, discordClient, { pollMs: 20 })).not.toThrow();
     await wait(60);
     expect(thread.messages).toHaveLength(0);
+
+    // A `/clear` can report the new transcript path before Claude Code has
+    // created the file — the watcher must still catch on once it appears.
+    writeFileSync(missingPath, `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'caught up' }] } })}\n`);
+    await wait(60);
+    expect(thread.messages.map((m) => m.content)).toEqual(['caught up']);
   });
 
   it('respects the global pause flag, resuming once unpaused, without restarting the watcher', async () => {

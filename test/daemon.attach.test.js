@@ -99,6 +99,48 @@ describe('POST /attach', () => {
     }
   });
 
+  it('a second attach for the same pane retires the previous record, stops its feed, and notifies its old thread', async () => {
+    const { writeConfig } = await import('../src/config.js');
+    writeConfig({ port: 0, token: 'bot-token', guildId: 'g1', channelId: 'chan-1' });
+
+    const discordClient = createFakeDiscordClient();
+    const server = await startServer({ discordClient });
+    const { port } = server.address();
+
+    try {
+      const firstRes = await postAttach(port, {
+        sessionId: 'sess-1',
+        projectName: 'my-project',
+        cwd: '/x',
+        tmuxTarget: 'main:1.0',
+      });
+      const { threadId: firstThreadId } = await firstRes.json();
+      const firstThread = await discordClient.channels.fetch(firstThreadId);
+      discordClient.simulateReaction(firstThread.messages[0].id, '✅');
+      expect(findBySessionId('sess-1').status).toBe('active');
+
+      const secondRes = await postAttach(port, {
+        sessionId: 'sess-2',
+        projectName: 'my-project',
+        cwd: '/x',
+        tmuxTarget: 'main:1.0',
+      });
+      expect(secondRes.status).toBe(200);
+      const { threadId: secondThreadId } = await secondRes.json();
+      expect(secondThreadId).not.toBe(firstThreadId);
+
+      // The stale record is gone entirely — no orphaned duplicate left for
+      // findActiveByCwd to ambiguously match against on a later /clear.
+      expect(findBySessionId('sess-1')).toBeNull();
+      expect(findBySessionId('sess-2')).toMatchObject({ status: 'pending-approval', threadId: secondThreadId });
+
+      // Its old thread got a best-effort notice that it's no longer routed to.
+      expect(firstThread.messages.at(-1).content).toMatch(/no longer routing/i);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   it('rejects an attach request missing required fields', async () => {
     const discordClient = createFakeDiscordClient();
     const server = await startServer({ discordClient });

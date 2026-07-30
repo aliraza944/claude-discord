@@ -6,6 +6,7 @@ import {
   registerPending,
   attachThread,
   promoteToActive,
+  rebindActiveSession,
   registerPendingApproval,
   approveSession,
   removeSession,
@@ -16,6 +17,8 @@ import {
   findByKey,
   findByThreadId,
   findByTmuxTarget,
+  findActiveByCwd,
+  retirePaneSessions,
   resetSessions,
 } from '../src/daemon/sessions.js';
 
@@ -72,6 +75,17 @@ describe('daemon/sessions.js', () => {
     expect(await promoteToActive('missing-token', 'sess-1')).toBeNull();
   });
 
+  it('re-promoting a token to a new session_id drops the stale bySessionId entry', async () => {
+    registerPending({ token: 't1', projectName: 'proj-a', cwd: '/a', tmuxTarget: 'tm-a' });
+    await promoteToActive('t1', 'sess-1', '/old.jsonl');
+    const repromoted = await promoteToActive('t1', 'sess-2', '/new.jsonl');
+
+    expect(repromoted).toMatchObject({ sessionId: 'sess-2', transcriptPath: '/new.jsonl' });
+    expect(findBySessionId('sess-1')).toBeNull();
+    expect(findBySessionId('sess-2')).toBe(repromoted);
+    expect(findByToken('t1')).toBe(repromoted);
+  });
+
   it('keeps two concurrently-registered sessions fully independent', async () => {
     registerPending({ token: 't1', projectName: 'proj-a', cwd: '/a', tmuxTarget: 'tm-a' });
     registerPending({ token: 't2', projectName: 'proj-b', cwd: '/b', tmuxTarget: 'tm-b' });
@@ -123,6 +137,124 @@ describe('daemon/sessions.js', () => {
 
   it('returns null for an unknown tmux target', () => {
     expect(findByTmuxTarget('no-such-target')).toBeNull();
+  });
+
+  describe('findActiveByCwd (attach-registered / token-less session correlation)', () => {
+    it('finds an active, attach-registered session by cwd + tmuxTarget', async () => {
+      registerPendingApproval({ sessionId: 'sess-1', projectName: 'p', cwd: '/p', tmuxTarget: 'tm-1' });
+      await approveSession('sess-1');
+      expect(findActiveByCwd('/p', 'tm-1')).toMatchObject({ sessionId: 'sess-1', token: null });
+    });
+
+    it('does not match a pending-approval (not yet approved) session', () => {
+      registerPendingApproval({ sessionId: 'sess-1', projectName: 'p', cwd: '/p', tmuxTarget: 'tm-1' });
+      expect(findActiveByCwd('/p', 'tm-1')).toBeNull();
+    });
+
+    it('does not match a token-based (start-registered) session, even if active', async () => {
+      registerPending({ token: 't1', projectName: 'p', cwd: '/p', tmuxTarget: 'tm-1' });
+      await promoteToActive('t1', 'sess-1');
+      expect(findActiveByCwd('/p', 'tm-1')).toBeNull();
+    });
+
+    it('returns null for an unknown cwd', () => {
+      expect(findActiveByCwd('/no-such-cwd', 'tm-1')).toBeNull();
+    });
+
+    it('does not match a same-cwd session belonging to a different tmux pane', async () => {
+      registerPendingApproval({ sessionId: 'sess-1', projectName: 'p', cwd: '/p', tmuxTarget: 'tm-1' });
+      await approveSession('sess-1');
+      expect(findActiveByCwd('/p', 'tm-2')).toBeNull();
+    });
+
+    it('disambiguates two active sessions sharing a cwd by tmuxTarget, e.g. an orphaned record left by a prior failed rebind', async () => {
+      registerPendingApproval({ sessionId: 'sess-1', projectName: 'p', cwd: '/p', tmuxTarget: 'tm-1' });
+      await approveSession('sess-1');
+      registerPendingApproval({ sessionId: 'sess-2', projectName: 'p', cwd: '/p', tmuxTarget: 'tm-2' });
+      await approveSession('sess-2');
+
+      expect(findActiveByCwd('/p', 'tm-1')).toMatchObject({ sessionId: 'sess-1' });
+      expect(findActiveByCwd('/p', 'tm-2')).toMatchObject({ sessionId: 'sess-2' });
+    });
+  });
+
+  describe('retirePaneSessions (attach-flow dedup)', () => {
+    it('removes an active, attach-registered record for the same cwd + tmuxTarget and returns it', async () => {
+      registerPendingApproval({ sessionId: 'sess-1', projectName: 'p', cwd: '/p', tmuxTarget: 'tm-1', transcriptPath: '/t.jsonl' });
+      attachThread('sess-1', 'thread-1');
+      await approveSession('sess-1');
+
+      const retired = await retirePaneSessions('/p', 'tm-1');
+
+      expect(retired).toMatchObject([{ sessionId: 'sess-1', threadId: 'thread-1' }]);
+      expect(findBySessionId('sess-1')).toBeNull();
+    });
+
+    it('removes a still pending-approval record too, not just active ones', async () => {
+      registerPendingApproval({ sessionId: 'sess-1', projectName: 'p', cwd: '/p', tmuxTarget: 'tm-1' });
+
+      const retired = await retirePaneSessions('/p', 'tm-1');
+
+      expect(retired).toMatchObject([{ sessionId: 'sess-1' }]);
+      expect(findBySessionId('sess-1')).toBeNull();
+    });
+
+    it('leaves a token-based (start-registered) session alone', async () => {
+      registerPending({ token: 't1', projectName: 'p', cwd: '/p', tmuxTarget: 'tm-1' });
+      await promoteToActive('t1', 'sess-1');
+
+      const retired = await retirePaneSessions('/p', 'tm-1');
+
+      expect(retired).toEqual([]);
+      expect(findBySessionId('sess-1')).not.toBeNull();
+    });
+
+    it('leaves sessions in a different pane untouched', async () => {
+      registerPendingApproval({ sessionId: 'sess-1', projectName: 'p', cwd: '/p', tmuxTarget: 'tm-1' });
+      await approveSession('sess-1');
+
+      const retired = await retirePaneSessions('/p', 'tm-2');
+
+      expect(retired).toEqual([]);
+      expect(findBySessionId('sess-1')).not.toBeNull();
+    });
+
+    it('removes every stale record when several accumulated for the same pane', async () => {
+      registerPendingApproval({ sessionId: 'sess-1', projectName: 'p', cwd: '/p', tmuxTarget: 'tm-1' });
+      await approveSession('sess-1');
+      registerPendingApproval({ sessionId: 'sess-2', projectName: 'p', cwd: '/p', tmuxTarget: 'tm-1' });
+      await approveSession('sess-2');
+
+      const retired = await retirePaneSessions('/p', 'tm-1');
+
+      expect(retired.map((r) => r.sessionId).sort()).toEqual(['sess-1', 'sess-2']);
+      expect(findBySessionId('sess-1')).toBeNull();
+      expect(findBySessionId('sess-2')).toBeNull();
+    });
+
+    it('un-persists a retired active session from state.json', async () => {
+      registerPendingApproval({ sessionId: 'sess-1', projectName: 'p', cwd: '/p', tmuxTarget: 'tm-1' });
+      await approveSession('sess-1');
+      expect(readPersistedActiveSessions()).toHaveLength(1);
+
+      await retirePaneSessions('/p', 'tm-1');
+
+      expect(readPersistedActiveSessions()).toEqual([]);
+    });
+  });
+
+  describe('rebindActiveSession (attach-flow /clear re-promotion)', () => {
+    it('re-keys an active, attach-registered session to a new session_id and transcriptPath', async () => {
+      registerPendingApproval({ sessionId: 'sess-1', projectName: 'p', cwd: '/p', tmuxTarget: 'tm-1', transcriptPath: '/old.jsonl' });
+      await approveSession('sess-1');
+      const record = findBySessionId('sess-1');
+
+      const rebound = await rebindActiveSession(record, 'sess-2', '/new.jsonl');
+
+      expect(rebound).toMatchObject({ sessionId: 'sess-2', transcriptPath: '/new.jsonl', status: 'active' });
+      expect(findBySessionId('sess-1')).toBeNull();
+      expect(findBySessionId('sess-2')).toBe(rebound);
+    });
   });
 
   describe('active-session persistence (for daemon-restart resume)', () => {

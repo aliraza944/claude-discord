@@ -116,6 +116,28 @@ describe('POST /detach', () => {
     }
   });
 
+  it('still succeeds and removes the session even when its thread is gone and posting the farewell fails', async () => {
+    const discordClient = createFakeDiscordClient();
+    registerPendingApproval({ sessionId: 'sess-1', projectName: 'p1', cwd: '/p1', tmuxTarget: 'tm-1' });
+    // A threadId the fake client never created as a thread — postToThread's
+    // fetch resolves to a plain channel stub with no .send, so posting the
+    // farewell throws, simulating a real deleted/archived-thread API error.
+    attachThread('sess-1', 'gone-thread');
+    await approveSession('sess-1');
+
+    const server = await startServer({ discordClient });
+    const { port } = server.address();
+
+    try {
+      const res = await postDetach(port, { tmuxTarget: 'tm-1' });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ detached: true, sessionId: 'sess-1' });
+      expect(findBySessionId('sess-1')).toBeNull();
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   it('reports no match (200, detached: false) for a tmux target with no attached session', async () => {
     const discordClient = createFakeDiscordClient();
     const server = await startServer({ discordClient });

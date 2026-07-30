@@ -106,17 +106,47 @@ export async function removeSession(sessionId) {
 }
 
 /**
- * Promotes a pending-by-token registration to active-by-session_id. Stores
- * `transcriptPath` (from the SessionStart hook payload) if given, and
- * persists the new active-session snapshot.
+ * Re-keys `record` to `sessionId` in `bySessionId`, dropping the stale entry
+ * under its previous session id (if any) so the registry doesn't accumulate
+ * dangling duplicates of the same record. Shared by every path that can
+ * re-promote an already-registered session to a new session id: `/clear` and
+ * `/compact` re-fire SessionStart for an already-active session (token-based
+ * or attach-registered alike), handing it a new `session_id` (and, for
+ * `/clear`, a new `transcript_path`) without a fresh `claude-discord
+ * start`/`attach`.
  */
-export async function promoteToActive(token, sessionId, transcriptPath) {
-  const record = byToken.get(token);
-  if (!record) return null;
+function rebindSessionId(record, sessionId, transcriptPath) {
+  const previousSessionId = record.sessionId;
+  if (previousSessionId && previousSessionId !== sessionId) bySessionId.delete(previousSessionId);
   record.sessionId = sessionId;
   record.status = 'active';
   if (transcriptPath) record.transcriptPath = transcriptPath;
   bySessionId.set(sessionId, record);
+}
+
+/**
+ * Promotes a pending-by-token registration to active-by-session_id. Stores
+ * `transcriptPath` (from the SessionStart hook payload) if given, and
+ * persists the new active-session snapshot. Also handles re-promoting a
+ * token that was already active (see `rebindSessionId`).
+ */
+export async function promoteToActive(token, sessionId, transcriptPath) {
+  const record = byToken.get(token);
+  if (!record) return null;
+  rebindSessionId(record, sessionId, transcriptPath);
+  await persistActiveSessions();
+  return record;
+}
+
+/**
+ * Re-keys an already-active, token-less (attach-registered) session to a new
+ * `session_id` — the attach-flow counterpart to `promoteToActive`'s re-promotion
+ * case. Attach-registered sessions have no token to correlate a SessionStart
+ * re-fire by, so callers must first resolve `record` some other way (see
+ * `findActiveByCwd`).
+ */
+export async function rebindActiveSession(record, sessionId, transcriptPath) {
+  rebindSessionId(record, sessionId, transcriptPath);
   await persistActiveSessions();
   return record;
 }
@@ -159,6 +189,45 @@ export function findBySessionId(sessionId) {
 /** Looks up a session by either its token or its promoted session_id. */
 export function findByKey(key) {
   return byToken.get(key) ?? bySessionId.get(key) ?? null;
+}
+
+/**
+ * Finds the token-less (attach-registered), already-`active` session whose
+ * cwd *and* tmuxTarget match — the correlation used to re-promote an
+ * attach-registered session on `/clear`/`/compact`, since those sessions
+ * have no token for `findByToken` to key off of. `tmuxTarget` is required
+ * alongside `cwd`, not just `cwd` alone: multiple panes (or stale orphaned
+ * records left behind by a prior failed rebind — see attach.js, which never
+ * dedupes) can share the same project directory, and matching on `cwd` only
+ * risks rebinding the wrong pane's record, permanently orphaning the right
+ * one. Restricted to `active` (never `pending-approval`) so a SessionStart
+ * re-fire can't race the attach ✅/❌ approval flow, which still looks the
+ * record up by its original session id.
+ */
+export function findActiveByCwd(cwd, tmuxTarget) {
+  for (const record of bySessionId.values()) {
+    if (record.token === null && record.cwd === cwd && record.tmuxTarget === tmuxTarget && record.status === 'active') return record;
+  }
+  return null;
+}
+
+/**
+ * Removes and returns every attach-registered (token-less) record for `cwd`
+ * + `tmuxTarget`, active or still pending-approval — called before `/attach`
+ * registers its own new record, so re-attaching in the same pane (e.g. after
+ * `/clear` failed to auto-rebind) never leaves the previous record behind as
+ * an orphaned duplicate for `findActiveByCwd` to ambiguously pick between.
+ * See `findActiveByCwd`'s docstring for what silently went wrong without
+ * this.
+ */
+export async function retirePaneSessions(cwd, tmuxTarget) {
+  const retired = [];
+  for (const record of bySessionId.values()) {
+    if (record.token === null && record.cwd === cwd && record.tmuxTarget === tmuxTarget) retired.push(record);
+  }
+  for (const record of retired) bySessionId.delete(record.sessionId);
+  if (retired.some((record) => record.status === 'active')) await persistActiveSessions();
+  return retired;
 }
 
 /** Looks up a session by its attached Discord thread id, across both maps (attach-registered sessions live only in `bySessionId`). */

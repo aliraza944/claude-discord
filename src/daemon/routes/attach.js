@@ -1,9 +1,12 @@
 import { sendJson, readJsonBody } from '../router.js';
 import { readConfig } from '../../config.js';
 import { createSessionThread, formatThreadName, postToThread } from '../../discord/threads.js';
-import { registerPendingApproval, attachThread } from '../sessions.js';
+import { registerPendingApproval, attachThread, retirePaneSessions } from '../sessions.js';
 import { registerAttachApproval } from '../attachApprovals.js';
 import { resolveTranscriptPath } from '../transcriptPath.js';
+import { stopFeedWatcher } from '../feedWatcher.js';
+
+const REPLACED_MESSAGE = '👋 Replaced by a new attach in this pane — no longer routing to this thread.';
 
 function describeAttachRequest({ projectName, cwd, tmuxTarget }) {
   return (
@@ -12,6 +15,17 @@ function describeAttachRequest({ projectName, cwd, tmuxTarget }) {
     `tmux: \`${tmuxTarget}\`\n` +
     `React ✅ to approve, ❌ to discard.`
   );
+}
+
+/** Stops the retired sessions' feed watchers and tells their threads they're no longer routed to, best-effort. */
+async function retirePane(discordClient, cwd, tmuxTarget) {
+  const retired = await retirePaneSessions(cwd, tmuxTarget);
+  for (const record of retired) {
+    stopFeedWatcher(record.sessionId);
+    if (record.threadId) {
+      await postToThread(discordClient, record.threadId, REPLACED_MESSAGE).catch(() => {});
+    }
+  }
 }
 
 /**
@@ -32,6 +46,7 @@ export function attachRoutes({ discordClient, now = () => new Date() } = {}) {
         return;
       }
 
+      await retirePane(discordClient, cwd, tmuxTarget);
       registerPendingApproval({ sessionId, projectName, cwd, tmuxTarget, transcriptPath: resolveTranscriptPath({ cwd, sessionId }) });
 
       const config = readConfig();
