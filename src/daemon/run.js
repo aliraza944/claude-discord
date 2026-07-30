@@ -13,6 +13,22 @@ import { registerSteeringHandlers } from '../discord/steering.js';
 import { registerSlashCommandHandlers, registerSlashCommands } from '../discord/slashCommands.js';
 import { readConfig } from '../config.js';
 import { createDiscordClient } from '../discord/client.js';
+import { readPersistedActiveSessions, restoreSession } from './sessions.js';
+import { startFeedWatcher } from './feedWatcher.js';
+
+/**
+ * Rehydrates every `active` session persisted in state.json (from a prior
+ * daemon process) into the in-memory registry, and resumes its feed watcher
+ * tailing from the current end-of-file — no backfill, no persisted offsets.
+ * A session with no discordClient available simply gets no feed, same as
+ * any other resumed/registered session would.
+ */
+function resumeActiveSessions(discordClient) {
+  for (const persisted of readPersistedActiveSessions()) {
+    const record = restoreSession(persisted);
+    if (discordClient) startFeedWatcher(record, discordClient);
+  }
+}
 
 /**
  * Aggregates every route module into a single "METHOD /path" -> handler map.
@@ -40,6 +56,7 @@ export function buildRoutes(deps = {}) {
 }
 
 export function createDaemonServer(deps = {}) {
+  resumeActiveSessions(deps.discordClient);
   return createServer(buildRoutes(deps));
 }
 

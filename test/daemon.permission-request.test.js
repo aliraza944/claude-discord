@@ -29,7 +29,7 @@ async function registerActiveSession(discordClient, { token, sessionId, projectN
   registerPending({ token, projectName, cwd: `/${projectName}`, tmuxTarget: `tm-${token}` });
   const thread = await createSessionThread(discordClient, { channelId: 'chan-1', name: projectName });
   attachThread(token, thread.id);
-  promoteToActive(token, sessionId);
+  await promoteToActive(token, sessionId);
   return thread;
 }
 

@@ -1,6 +1,7 @@
 import { sendJson, readJsonBody } from '../router.js';
 import { postToThread } from '../../discord/threads.js';
 import { findByTmuxTarget, removeSession } from '../sessions.js';
+import { stopFeedWatcher } from '../feedWatcher.js';
 
 const FAREWELL_MESSAGE = '👋 Session detached — no longer routing to this thread.';
 
@@ -22,7 +23,8 @@ export function detachRoutes({ discordClient } = {}) {
         return;
       }
 
-      removeSession(session.sessionId);
+      await removeSession(session.sessionId);
+      stopFeedWatcher(session.sessionId);
 
       // Best-effort: the session is unregistered (and hook routing for it
       // stops) even if there's no discordClient to tell the thread about it.

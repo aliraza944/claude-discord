@@ -3,58 +3,17 @@ import { readStateSync } from '../../state.js';
 import { postToThread } from '../../discord/threads.js';
 import { findBySessionId } from '../sessions.js';
 import { registerPending, resolvePending } from '../pending.js';
+import { formatToolInput } from '../toolCallFormat.js';
 
 // Comfortably under settings.json's 6h (21600s) PermissionRequest hook
 // timeout, so the daemon always resolves (as defer, worst case) before
 // Claude Code's own hook execution would be killed.
 const DEFAULT_SAFETY_TIMEOUT_MS = 6 * 60 * 60 * 1000 - 5000;
 
-// Comfortably under Discord's 2000-char message limit, leaving room for the
-// header/footer lines and code-block fencing around the preview itself.
-const MAX_PREVIEW_LENGTH = 1200;
-
-function truncate(text) {
-  return text.length <= MAX_PREVIEW_LENGTH ? text : `${text.slice(0, MAX_PREVIEW_LENGTH)}\n…truncated`;
-}
-
-function describeBash(input) {
-  const description = input.description ? `${input.description}\n` : '';
-  return `${description}\`\`\`\n${truncate(String(input.command ?? ''))}\n\`\`\``;
-}
-
-function editDiff(edit) {
-  return `- ${edit.old_string ?? ''}\n+ ${edit.new_string ?? ''}`;
-}
-
-function describeEdit(input) {
-  return `**${input.file_path ?? 'unknown file'}**\n\`\`\`diff\n${truncate(editDiff(input))}\n\`\`\``;
-}
-
-function describeMultiEdit(input) {
-  const diff = (input.edits ?? []).map(editDiff).join('\n\n');
-  return `**${input.file_path ?? 'unknown file'}**\n\`\`\`diff\n${truncate(diff)}\n\`\`\``;
-}
-
-function describeWrite(input) {
-  return `**${input.file_path ?? 'unknown file'}**\n\`\`\`\n${truncate(String(input.content ?? ''))}\n\`\`\``;
-}
-
-function describeGeneric(input) {
-  return `\`\`\`json\n${truncate(JSON.stringify(input, null, 2))}\n\`\`\``;
-}
-
-const DESCRIBERS = {
-  Bash: describeBash,
-  Edit: describeEdit,
-  MultiEdit: describeMultiEdit,
-  Write: describeWrite,
-};
-
 function describeToolCall(payload) {
   const toolName = payload.tool_name ?? 'a tool call';
   const input = payload.tool_input ?? {};
-  const describe = DESCRIBERS[toolName];
-  const body = describe ? describe(input) : describeGeneric(input);
+  const body = formatToolInput(toolName, input);
   return `Permission requested: **${toolName}**\n${body}\nReact ✅ to allow, ❌ to deny.`;
 }
 

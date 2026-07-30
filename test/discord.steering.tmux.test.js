@@ -1,12 +1,16 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { newSession, capturePane } from '../src/tmux.js';
 import { registerSteeringHandlers } from '../src/discord/steering.js';
 import { registerPending, attachThread, promoteToActive, resetSessions } from '../src/daemon/sessions.js';
 import { createFakeDiscordClient } from './support/fakeDiscordClient.js';
 
 const execFileAsync = promisify(execFile);
+let home;
 
 // Issue 05's explicit acceptance bullet: with two sessions registered, a
 // plain-text reply in one session's thread is only ever delivered to that
@@ -17,7 +21,14 @@ describe('discord/steering.js (real tmux, multi-session isolation)', () => {
   const targetA = `claude-discord-test-steer-a-${process.pid}`;
   const targetB = `claude-discord-test-steer-b-${process.pid}`;
 
+  beforeEach(() => {
+    home = mkdtempSync(path.join(tmpdir(), 'claude-discord-steering-tmux-'));
+    process.env.CLAUDE_DISCORD_HOME = home;
+  });
+
   afterEach(async () => {
+    delete process.env.CLAUDE_DISCORD_HOME;
+    rmSync(home, { recursive: true, force: true });
     resetSessions();
     for (const target of [targetA, targetB]) {
       try {
@@ -41,8 +52,8 @@ describe('discord/steering.js (real tmux, multi-session isolation)', () => {
     const threadB = await discordClient.channels.fetch('chan-1').then((c) => c.threads.create({ name: 'project-b' }));
     attachThread('tok-a', threadA.id);
     attachThread('tok-b', threadB.id);
-    promoteToActive('tok-a', 'sess-a');
-    promoteToActive('tok-b', 'sess-b');
+    await promoteToActive('tok-a', 'sess-a');
+    await promoteToActive('tok-b', 'sess-b');
 
     registerSteeringHandlers(discordClient);
 

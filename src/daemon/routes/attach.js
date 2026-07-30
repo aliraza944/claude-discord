@@ -3,6 +3,7 @@ import { readConfig } from '../../config.js';
 import { createSessionThread, formatThreadName, postToThread } from '../../discord/threads.js';
 import { registerPendingApproval, attachThread } from '../sessions.js';
 import { registerAttachApproval } from '../attachApprovals.js';
+import { resolveTranscriptPath } from '../transcriptPath.js';
 
 function describeAttachRequest({ projectName, cwd, tmuxTarget }) {
   return (
@@ -31,7 +32,7 @@ export function attachRoutes({ discordClient, now = () => new Date() } = {}) {
         return;
       }
 
-      registerPendingApproval({ sessionId, projectName, cwd, tmuxTarget });
+      registerPendingApproval({ sessionId, projectName, cwd, tmuxTarget, transcriptPath: resolveTranscriptPath({ cwd, sessionId }) });
 
       const config = readConfig();
       const name = formatThreadName(projectName, now());

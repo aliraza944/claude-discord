@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDaemonServer } from '../src/daemon/run.js';
@@ -7,12 +7,17 @@ import { createFakeDiscordClient } from './support/fakeDiscordClient.js';
 import { resetSessions, findBySessionId } from '../src/daemon/sessions.js';
 import { resetAttachApprovals } from '../src/daemon/attachApprovals.js';
 import { resetPending } from '../src/daemon/pending.js';
+import { resetFeedWatchers } from '../src/daemon/feedWatcher.js';
+import { wait } from './support/wait.js';
 
 let home;
+let claudeHome;
 
 beforeEach(() => {
   home = mkdtempSync(path.join(tmpdir(), 'claude-discord-attach-'));
+  claudeHome = mkdtempSync(path.join(tmpdir(), 'claude-discord-attach-claude-home-'));
   process.env.CLAUDE_DISCORD_HOME = home;
+  process.env.CLAUDE_DISCORD_CLAUDE_HOME = claudeHome;
   resetSessions();
   resetAttachApprovals();
   resetPending();
@@ -20,11 +25,24 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.CLAUDE_DISCORD_HOME;
+  delete process.env.CLAUDE_DISCORD_CLAUDE_HOME;
   rmSync(home, { recursive: true, force: true });
+  rmSync(claudeHome, { recursive: true, force: true });
   resetSessions();
   resetAttachApprovals();
   resetPending();
+  resetFeedWatchers();
 });
+
+/** Writes a transcript file at the path attach's resolveTranscriptPath convention will reconstruct for `{ cwd, sessionId }`. */
+function writeTranscriptFor({ cwd, sessionId }, initialContent = '') {
+  const slug = cwd.replaceAll('/', '-');
+  const dir = path.join(claudeHome, 'projects', slug);
+  mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, `${sessionId}.jsonl`);
+  writeFileSync(filePath, initialContent);
+  return filePath;
+}
 
 async function startServer(deps) {
   const server = createDaemonServer(deps);
@@ -208,6 +226,71 @@ describe('POST /attach', () => {
       expect(findBySessionId('sess-a').status).toBe('active');
       expect(findBySessionId('sess-b').status).toBe('pending-approval');
       expect(threadB.messages).toHaveLength(1);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('reacting ✅ starts the live feed (transcript path reconstructed at attach time), with no backfill of pre-existing content', async () => {
+    const { writeConfig } = await import('../src/config.js');
+    writeConfig({ port: 0, token: 'bot-token', guildId: 'g1', channelId: 'chan-1' });
+
+    const transcriptPath = writeTranscriptFor(
+      { cwd: '/x', sessionId: 'sess-1' },
+      `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'pre-approval, should not appear' }] } })}\n`
+    );
+
+    const discordClient = createFakeDiscordClient();
+    const server = await startServer({ discordClient });
+    const { port } = server.address();
+
+    try {
+      const attachRes = await postAttach(port, { sessionId: 'sess-1', projectName: 'my-project', cwd: '/x', tmuxTarget: 'main:1.0' });
+      const { threadId } = await attachRes.json();
+      expect(findBySessionId('sess-1').transcriptPath).toBe(transcriptPath);
+
+      const thread = await discordClient.channels.fetch(threadId);
+      appendFileSync(transcriptPath, `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'before approval' }] } })}\n`);
+      await wait(200);
+      // Not approved yet — no feed running, so nothing should have posted beyond the approval prompt itself.
+      expect(thread.messages).toHaveLength(1);
+
+      discordClient.simulateReaction(thread.messages[0].id, '✅');
+      await wait(50);
+
+      appendFileSync(transcriptPath, `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'after approval' }] } })}\n`);
+      await wait(250);
+
+      const liveMessages = thread.messages.slice(1).map((m) => m.content);
+      expect(liveMessages).toEqual(['after approval']);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('reacting ❌ never starts a live feed for the discarded session', async () => {
+    const { writeConfig } = await import('../src/config.js');
+    writeConfig({ port: 0, token: 'bot-token', guildId: 'g1', channelId: 'chan-1' });
+
+    const transcriptPath = writeTranscriptFor({ cwd: '/x', sessionId: 'sess-1' });
+
+    const discordClient = createFakeDiscordClient();
+    const server = await startServer({ discordClient });
+    const { port } = server.address();
+
+    try {
+      const attachRes = await postAttach(port, { sessionId: 'sess-1', projectName: 'my-project', cwd: '/x', tmuxTarget: 'main:1.0' });
+      const { threadId } = await attachRes.json();
+      const thread = await discordClient.channels.fetch(threadId);
+
+      discordClient.simulateReaction(thread.messages[0].id, '❌');
+      await wait(50);
+
+      appendFileSync(transcriptPath, `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'should never appear' }] } })}\n`);
+      await wait(200);
+
+      // Only the approval prompt + the discard confirmation reply — no feed entry.
+      expect(thread.messages).toHaveLength(2);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
