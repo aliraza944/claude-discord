@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createFakeDiscordClient } from './support/fakeDiscordClient.js';
 import { registerSteeringHandlers } from '../src/discord/steering.js';
-import { registerPending, attachThread, promoteToActive, resetSessions } from '../src/daemon/sessions.js';
+import {
+  registerPending,
+  attachThread,
+  promoteToActive,
+  registerPendingApproval,
+  approveSession,
+  resetSessions,
+} from '../src/daemon/sessions.js';
 
 afterEach(() => {
   resetSessions();
@@ -49,6 +56,21 @@ describe('discord/steering.js', () => {
     await flushMicrotasks();
 
     expect(sendText).not.toHaveBeenCalled();
+  });
+
+  it('delivers a reply for an attach-registered session (keyed only by session_id, never a token)', async () => {
+    registerPendingApproval({ sessionId: 'sess-1', projectName: 'p1', cwd: '/p1', tmuxTarget: 'tm-1' });
+    attachThread('sess-1', 'thread-1');
+    approveSession('sess-1');
+
+    const discordClient = createFakeDiscordClient();
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    registerSteeringHandlers(discordClient, { sendText });
+
+    discordClient.simulateMessage({ channelId: 'thread-1', content: 'go ahead' });
+    await flushMicrotasks();
+
+    expect(sendText).toHaveBeenCalledWith('tm-1', 'go ahead');
   });
 
   it('a reply in one session thread never reaches another session tmux target', async () => {

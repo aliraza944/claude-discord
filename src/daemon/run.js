@@ -6,6 +6,7 @@ import { sessionStartRoutes } from './routes/session-start.js';
 import { permissionRequestRoutes } from './routes/permission-request.js';
 import { notificationRoutes } from './routes/notification.js';
 import { controlRoutes } from './routes/control.js';
+import { attachRoutes } from './routes/attach.js';
 import { registerReactionHandlers } from '../discord/reactions.js';
 import { registerSteeringHandlers } from '../discord/steering.js';
 import { registerSlashCommandHandlers, registerSlashCommands } from '../discord/slashCommands.js';
@@ -32,6 +33,7 @@ export function buildRoutes(deps = {}) {
     ...permissionRequestRoutes(deps),
     ...notificationRoutes(deps),
     ...controlRoutes(),
+    ...attachRoutes(deps),
   };
 }
 

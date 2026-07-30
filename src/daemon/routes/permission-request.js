@@ -69,9 +69,10 @@ export function permissionRequestRoutes({ discordClient, safetyTimeoutMs = DEFAU
       const state = readStateSync();
       const session = sessionId ? findBySessionId(sessionId) : null;
 
-      // Paused, or a session the daemon has no record of (or one that hasn't
-      // gotten a thread yet): resolve as defer immediately, no Discord message.
-      if (state.paused || !session || !session.threadId) {
+      // Paused, or a session the daemon has no record of, isn't active yet
+      // (still pending or awaiting attach approval), or hasn't gotten a
+      // thread yet: resolve as defer immediately, no Discord message.
+      if (state.paused || !session || session.status !== 'active' || !session.threadId) {
         sendJson(res, 200, { decision: 'defer' });
         return;
       }

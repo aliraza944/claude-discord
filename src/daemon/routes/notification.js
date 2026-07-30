@@ -11,7 +11,8 @@ function describeNotification(payload) {
  * Fire-and-forget FYI: posts a "needs input" style message to the session's
  * thread for the Notification hook's agent_needs_input/idle_prompt/
  * agent_completed matchers. Silently no-ops for an unregistered session, a
- * session that hasn't gotten a thread yet, or while globally paused, since
+ * session that isn't active yet (still pending or awaiting attach approval),
+ * a session that hasn't gotten a thread yet, or while globally paused, since
  * there is nowhere to post (or nowhere it should post).
  * @param {{ discordClient?: object }} [deps]
  */
@@ -23,7 +24,7 @@ export function notificationRoutes({ discordClient } = {}) {
       const state = readStateSync();
       const session = sessionId ? findBySessionId(sessionId) : null;
 
-      if (!state.paused && session?.threadId && discordClient) {
+      if (!state.paused && session?.status === 'active' && session?.threadId && discordClient) {
         await postToThread(discordClient, session.threadId, describeNotification(payload));
       }
 

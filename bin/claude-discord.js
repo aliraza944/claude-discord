@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { statusCommand } from '../src/cli/commands/status.js';
 import { initCommand } from '../src/cli/commands/init.js';
 import { startCommand } from '../src/cli/commands/start.js';
+import { attachCommand } from '../src/cli/commands/attach.js';
 import { pauseCommand, resumeCommand } from '../src/cli/commands/control.js';
 import {
   daemonStartCommand,
@@ -32,6 +33,11 @@ program
   .command('start <path>')
   .description('Launch a Claude Code session in tmux, wired up for Discord control')
   .action((path) => startCommand(path));
+
+program
+  .command('attach')
+  .description('Wire the Claude Code session running in this tmux pane up to Discord, gated by reaction approval')
+  .action(() => attachCommand());
 
 program
   .command('pause')

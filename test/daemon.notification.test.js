@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDaemonServer } from '../src/daemon/run.js';
 import { createFakeDiscordClient } from './support/fakeDiscordClient.js';
-import { registerPending, attachThread, promoteToActive, resetSessions } from '../src/daemon/sessions.js';
+import {
+  registerPending,
+  attachThread,
+  promoteToActive,
+  registerPendingApproval,
+  resetSessions,
+} from '../src/daemon/sessions.js';
 import { createSessionThread } from '../src/discord/threads.js';
 import { setPaused } from '../src/state.js';
 
@@ -77,6 +83,27 @@ describe('POST /hook/notification', () => {
     await setPaused(true);
     const discordClient = createFakeDiscordClient();
     const thread = await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
+
+    const server = await startServer(discordClient);
+    const { port } = server.address();
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/hook/notification`, {
+        method: 'POST',
+        body: JSON.stringify({ session_id: 'sess-1', message: 'idle' }),
+      });
+      expect(res.status).toBe(200);
+      expect(thread.messages).toHaveLength(0);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('does nothing (200 ok, no discord message) for a pending-approval (unapproved attach) session even though it already has a thread', async () => {
+    const discordClient = createFakeDiscordClient();
+    registerPendingApproval({ sessionId: 'sess-1', projectName: 'p1', cwd: '/p1', tmuxTarget: 'tm-1' });
+    const thread = await createSessionThread(discordClient, { channelId: 'chan-1', name: 'p1' });
+    attachThread('sess-1', thread.id);
 
     const server = await startServer(discordClient);
     const { port } = server.address();
