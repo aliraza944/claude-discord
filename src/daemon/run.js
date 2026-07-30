@@ -7,6 +7,7 @@ import { permissionRequestRoutes } from './routes/permission-request.js';
 import { notificationRoutes } from './routes/notification.js';
 import { controlRoutes } from './routes/control.js';
 import { attachRoutes } from './routes/attach.js';
+import { detachRoutes } from './routes/detach.js';
 import { registerReactionHandlers } from '../discord/reactions.js';
 import { registerSteeringHandlers } from '../discord/steering.js';
 import { registerSlashCommandHandlers, registerSlashCommands } from '../discord/slashCommands.js';
@@ -34,6 +35,7 @@ export function buildRoutes(deps = {}) {
     ...notificationRoutes(deps),
     ...controlRoutes(),
     ...attachRoutes(deps),
+    ...detachRoutes(deps),
   };
 }
 

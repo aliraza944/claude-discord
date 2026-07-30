@@ -101,6 +101,17 @@ export function findByThreadId(threadId) {
   return null;
 }
 
+/** Looks up a session by its tmux target, across both maps. */
+export function findByTmuxTarget(tmuxTarget) {
+  for (const record of byToken.values()) {
+    if (record.tmuxTarget === tmuxTarget) return record;
+  }
+  for (const record of bySessionId.values()) {
+    if (record.tmuxTarget === tmuxTarget) return record;
+  }
+  return null;
+}
+
 /** Test-only: clears the registry so tests don't leak state across cases. */
 export function resetSessions() {
   byToken.clear();

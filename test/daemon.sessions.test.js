@@ -3,10 +3,12 @@ import {
   registerPending,
   attachThread,
   promoteToActive,
+  registerPendingApproval,
   findByToken,
   findBySessionId,
   findByKey,
   findByThreadId,
+  findByTmuxTarget,
   resetSessions,
 } from '../src/daemon/sessions.js';
 
@@ -90,5 +92,17 @@ describe('daemon/sessions.js', () => {
 
   it('returns null for an unknown thread id', () => {
     expect(findByThreadId('no-such-thread')).toBeNull();
+  });
+
+  it('finds a session by its tmux target, across both registration paths', () => {
+    registerPending({ token: 't1', projectName: 'proj-a', cwd: '/a', tmuxTarget: 'tm-a' });
+    registerPendingApproval({ sessionId: 'sess-2', projectName: 'proj-b', cwd: '/b', tmuxTarget: 'tm-b' });
+
+    expect(findByTmuxTarget('tm-a')).toMatchObject({ token: 't1' });
+    expect(findByTmuxTarget('tm-b')).toMatchObject({ sessionId: 'sess-2' });
+  });
+
+  it('returns null for an unknown tmux target', () => {
+    expect(findByTmuxTarget('no-such-target')).toBeNull();
   });
 });
