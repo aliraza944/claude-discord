@@ -2,6 +2,7 @@ import { readStateSync } from '../state.js';
 import { postToThread } from '../discord/threads.js';
 import { createTranscriptTail } from './transcriptTail.js';
 import { formatToolInput, truncate } from './toolCallFormat.js';
+import { postAskUserQuestionForm } from '../discord/askQuestionForm.js';
 
 /** In-memory Map<sessionId, tailHandle> of running feed watchers — one per active session. */
 const watchersBySessionId = new Map();
@@ -35,8 +36,11 @@ function formatToolResultBlock(block) {
  * strings, per spec.md's "Entry filtering and mapping": subagent
  * (`isSidechain`) entries and non-`user`/`assistant` lines are dropped
  * entirely; `thinking` blocks are skipped; `assistant` `text`/`tool_use`
- * blocks and `user` `tool_result` blocks each produce one message. Exported
- * for direct unit testing — it's a pure function with no I/O.
+ * blocks and `user` `tool_result` blocks each produce one message. An
+ * `AskUserQuestion` tool_use block is skipped here — it never gets a plain
+ * feed message, since `postEntryMessages` renders it as an interactive form
+ * instead (see `extractAskUserQuestionCalls`). Exported for direct unit
+ * testing — it's a pure function with no I/O.
  */
 export function mapEntryToMessages(entry) {
   if (!entry || entry.isSidechain) return [];
@@ -49,7 +53,7 @@ export function mapEntryToMessages(entry) {
   for (const block of content) {
     if (entry.type === 'assistant') {
       if (block?.type === 'text') messages.push(formatAssistantText(block));
-      else if (block?.type === 'tool_use') messages.push(formatToolUseBlock(block));
+      else if (block?.type === 'tool_use' && block.name !== 'AskUserQuestion') messages.push(formatToolUseBlock(block));
     } else if (block?.type === 'tool_result') {
       messages.push(formatToolResultBlock(block));
     }
@@ -57,13 +61,40 @@ export function mapEntryToMessages(entry) {
   return messages;
 }
 
-async function postEntryMessages(entry, { threadId, discordClient }) {
+/**
+ * Extracts the `questions` array of every `AskUserQuestion` tool_use block
+ * in an assistant entry — the interception point this feature needed, since
+ * no hook fires for `AskUserQuestion` (see spec.md): the feed watcher
+ * already tails every transcript entry, so it's the natural place to notice
+ * the call and render a Discord form for it instead of a plain feed message.
+ * Pure, like `mapEntryToMessages`.
+ */
+export function extractAskUserQuestionCalls(entry) {
+  if (!entry || entry.isSidechain || entry.type !== 'assistant') return [];
+  const content = entry.message?.content;
+  if (!Array.isArray(content)) return [];
+  return content
+    .filter((block) => block?.type === 'tool_use' && block.name === 'AskUserQuestion')
+    .map((block) => block.input?.questions)
+    .filter((questions) => Array.isArray(questions));
+}
+
+async function postEntryMessages(entry, { session, discordClient, askQuestionDeps = {} }) {
   for (const content of mapEntryToMessages(entry)) {
     if (readStateSync().paused) continue;
     try {
-      await postToThread(discordClient, threadId, content);
+      await postToThread(discordClient, session.threadId, content);
     } catch {
       // Best-effort: a failed post (e.g. thread gone) never crashes the watcher.
+    }
+  }
+
+  for (const questions of extractAskUserQuestionCalls(entry)) {
+    if (readStateSync().paused) continue;
+    try {
+      await postAskUserQuestionForm(discordClient, { session, questions }, askQuestionDeps);
+    } catch {
+      // Best-effort, same as the plain-message path above.
     }
   }
 }
@@ -77,10 +108,15 @@ async function postEntryMessages(entry, { threadId, discordClient }) {
  * SessionStart hook can report the new path before Claude Code has created
  * the file; `createTranscriptTail`'s poll loop tolerates that and starts
  * picking up lines as soon as the file appears.
- * @param {{ sessionId: string, transcriptPath?: string|null, threadId?: string|null }} session
+ * @param {{ sessionId: string, transcriptPath?: string|null, threadId?: string|null, tmuxTarget?: string }} session
+ * `tmuxTarget` is only required for sessions that may hit an
+ * `AskUserQuestion` call — its form's submit handler delivers answers via
+ * `tmux send-keys` against that pane (see askQuestionForm.js).
  * @param {object} discordClient
- * @param {{ pollMs?: number, startOffset?: number }} [opts] `startOffset` is
+ * @param {{ pollMs?: number, startOffset?: number, askQuestionDeps?: object }} [opts] `startOffset` is
  * forwarded to `createTranscriptTail` — see there for why a caller would set it.
+ * `askQuestionDeps` is forwarded to `postAskUserQuestionForm` (e.g. tests
+ * overriding `formTimeoutMs`/tmux calls).
  */
 export function startFeedWatcher(session, discordClient, opts = {}) {
   const sessionId = session?.sessionId;
@@ -99,7 +135,7 @@ export function startFeedWatcher(session, discordClient, opts = {}) {
         } catch {
           return;
         }
-        await postEntryMessages(entry, { threadId: session.threadId, discordClient });
+        await postEntryMessages(entry, { session, discordClient, askQuestionDeps: opts.askQuestionDeps });
       });
     },
   });

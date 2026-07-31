@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { hasSession, newSession, sendText, capturePane, currentPaneTarget } from '../src/tmux.js';
+import { hasSession, newSession, sendText, sendLiteral, sendKey, capturePane, currentPaneTarget } from '../src/tmux.js';
 
 const execFileAsync = promisify(execFile);
 const tmuxModulePath = fileURLToPath(new URL('../src/tmux.js', import.meta.url));
@@ -48,6 +48,34 @@ describe('tmux.js (real tmux)', () => {
 
     const pane = await capturePane(target);
     expect(pane).toContain('-rf $(rm everything); echo hi');
+  });
+
+  it('sendLiteral types text without pressing Enter, unlike sendText', async () => {
+    await newSession({ target, cwd: '/tmp', command: 'cat' });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    await sendLiteral(target, 'not yet submitted');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    let pane = await capturePane(target);
+    expect(pane).toContain('not yet submitted');
+    expect(pane).not.toContain('$'); // cat hasn't echoed a completed line back yet
+
+    await sendKey(target, 'Enter');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    pane = await capturePane(target);
+    expect(pane).toContain('not yet submitted');
+  });
+
+  it('sendKey sends a single named key (e.g. a real Down arrow keypress)', async () => {
+    // `cat` doesn't render arrow keys meaningfully, but this at least
+    // confirms send-keys accepts the named key without literal (-l) escaping
+    // and doesn't throw/hang.
+    await newSession({ target, cwd: '/tmp', command: 'cat' });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    await expect(sendKey(target, 'Down')).resolves.toBeUndefined();
+    await expect(sendKey(target, 'Tab')).resolves.toBeUndefined();
   });
 });
 

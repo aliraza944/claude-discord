@@ -75,7 +75,7 @@ describe('POST /hook/permission-request', () => {
     }
   });
 
-  it('posts a reactable message and resolves allow when ✅ is reacted', async () => {
+  it('posts a message with Allow/Deny buttons and resolves allow when Allow is tapped', async () => {
     const discordClient = createFakeDiscordClient();
     const thread = await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
 
@@ -92,9 +92,11 @@ describe('POST /hook/permission-request', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(thread.messages).toHaveLength(1);
       const message = thread.messages[0];
-      expect(message.reactions).toEqual(['✅', '❌']);
+      expect(message.components).toHaveLength(1);
+      const buttonLabels = message.components[0].toJSON().components.map((b) => b.label);
+      expect(buttonLabels).toEqual(['Allow', 'Deny']);
 
-      discordClient.simulateReaction(message.id, '✅');
+      discordClient.simulateButtonClick(`perm:${message.id}:allow`, { messageId: message.id });
 
       const res = await responsePromise;
       expect(await res.json()).toEqual({ decision: 'allow' });
@@ -103,7 +105,7 @@ describe('POST /hook/permission-request', () => {
     }
   });
 
-  it('resolves deny when ❌ is reacted', async () => {
+  it('resolves deny when Deny is tapped', async () => {
     const discordClient = createFakeDiscordClient();
     const thread = await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
 
@@ -119,7 +121,7 @@ describe('POST /hook/permission-request', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       const message = thread.messages[0];
 
-      discordClient.simulateReaction(message.id, '❌');
+      discordClient.simulateButtonClick(`perm:${message.id}:deny`, { messageId: message.id });
 
       const res = await responsePromise;
       expect(await res.json()).toEqual({ decision: 'deny' });
@@ -168,7 +170,7 @@ describe('POST /hook/permission-request', () => {
       expect(message.content).toContain('Clean the build directory');
       expect(message.content).toContain('```\nrm -rf build\n```');
 
-      discordClient.simulateReaction(message.id, '✅');
+      discordClient.simulateButtonClick(`perm:${message.id}:allow`, { messageId: message.id });
       await responsePromise;
     } finally {
       await new Promise((resolve) => server.close(resolve));
@@ -198,7 +200,7 @@ describe('POST /hook/permission-request', () => {
       expect(message.content).toContain('- const a = 1;');
       expect(message.content).toContain('+ const a = 2;');
 
-      discordClient.simulateReaction(message.id, '✅');
+      discordClient.simulateButtonClick(`perm:${message.id}:allow`, { messageId: message.id });
       await responsePromise;
     } finally {
       await new Promise((resolve) => server.close(resolve));
@@ -236,7 +238,7 @@ describe('POST /hook/permission-request', () => {
       expect(message.content).toContain('- baz');
       expect(message.content).toContain('+ qux');
 
-      discordClient.simulateReaction(message.id, '✅');
+      discordClient.simulateButtonClick(`perm:${message.id}:allow`, { messageId: message.id });
       await responsePromise;
     } finally {
       await new Promise((resolve) => server.close(resolve));
@@ -265,7 +267,7 @@ describe('POST /hook/permission-request', () => {
       expect(message.content).toContain('/repo/notes.txt');
       expect(message.content).toContain('hello world');
 
-      discordClient.simulateReaction(message.id, '✅');
+      discordClient.simulateButtonClick(`perm:${message.id}:allow`, { messageId: message.id });
       await responsePromise;
     } finally {
       await new Promise((resolve) => server.close(resolve));
@@ -294,7 +296,7 @@ describe('POST /hook/permission-request', () => {
       expect(message.content).toContain('**WebFetch**');
       expect(message.content).toContain('"url": "https://example.com"');
 
-      discordClient.simulateReaction(message.id, '✅');
+      discordClient.simulateButtonClick(`perm:${message.id}:allow`, { messageId: message.id });
       await responsePromise;
     } finally {
       await new Promise((resolve) => server.close(resolve));
@@ -323,14 +325,14 @@ describe('POST /hook/permission-request', () => {
       expect(message.content).toContain('…truncated');
       expect(message.content.length).toBeLessThan(2000);
 
-      discordClient.simulateReaction(message.id, '✅');
+      discordClient.simulateButtonClick(`perm:${message.id}:allow`, { messageId: message.id });
       await responsePromise;
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
   });
 
-  it('a reaction on one session thread message never resolves another session pending request', async () => {
+  it('a button tap on one session thread message never resolves another session pending request', async () => {
     const discordClient = createFakeDiscordClient();
     const threadA = await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
     const threadB = await registerActiveSession(discordClient, { token: 'tok-2', sessionId: 'sess-2', projectName: 'p2' });
@@ -353,9 +355,9 @@ describe('POST /hook/permission-request', () => {
       const messageB = threadB.messages[0];
       expect(messageA.id).not.toBe(messageB.id);
 
-      // React on A only. B has no reaction and must resolve via its own
-      // safety timeout as defer, never as a side effect of A's reaction.
-      discordClient.simulateReaction(messageA.id, '✅');
+      // Tap A's Allow button only. B gets no tap and must resolve via its
+      // own safety timeout as defer, never as a side effect of A's tap.
+      discordClient.simulateButtonClick(`perm:${messageA.id}:allow`, { messageId: messageA.id });
 
       const [resA, resB] = await Promise.all([responseA, responseB]);
       expect(await resA.json()).toEqual({ decision: 'allow' });

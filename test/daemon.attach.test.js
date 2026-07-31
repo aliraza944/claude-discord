@@ -5,7 +5,6 @@ import path from 'node:path';
 import { createDaemonServer } from '../src/daemon/run.js';
 import { createFakeDiscordClient } from './support/fakeDiscordClient.js';
 import { resetSessions, findBySessionId } from '../src/daemon/sessions.js';
-import { resetAttachApprovals } from '../src/daemon/attachApprovals.js';
 import { resetPending } from '../src/daemon/pending.js';
 import { resetFeedWatchers } from '../src/daemon/feedWatcher.js';
 import { wait } from './support/wait.js';
@@ -19,7 +18,6 @@ beforeEach(() => {
   process.env.CLAUDE_DISCORD_HOME = home;
   process.env.CLAUDE_DISCORD_CLAUDE_HOME = claudeHome;
   resetSessions();
-  resetAttachApprovals();
   resetPending();
 });
 
@@ -29,7 +27,6 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
   rmSync(claudeHome, { recursive: true, force: true });
   resetSessions();
-  resetAttachApprovals();
   resetPending();
   resetFeedWatchers();
 });
@@ -58,7 +55,7 @@ async function postAttach(port, body) {
 }
 
 describe('POST /attach', () => {
-  it('registers a pending-approval session, creates a thread, and posts a reactable context message', async () => {
+  it('registers a pending-approval session, creates a thread, and posts a context message with Accept/Discard buttons', async () => {
     const { writeConfig } = await import('../src/config.js');
     writeConfig({ port: 0, token: 'bot-token', guildId: 'g1', channelId: 'chan-1' });
 
@@ -93,7 +90,9 @@ describe('POST /attach', () => {
       expect(message.content).toContain('my-project');
       expect(message.content).toContain('/home/x/my-project');
       expect(message.content).toContain('main:1.0');
-      expect(message.reactions).toEqual(['✅', '❌']);
+      expect(message.components).toHaveLength(1);
+      const buttonLabels = message.components[0].toJSON().components.map((b) => b.label);
+      expect(buttonLabels).toEqual(['Accept', 'Discard']);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
@@ -116,7 +115,8 @@ describe('POST /attach', () => {
       });
       const { threadId: firstThreadId } = await firstRes.json();
       const firstThread = await discordClient.channels.fetch(firstThreadId);
-      discordClient.simulateReaction(firstThread.messages[0].id, '✅');
+      const firstMessage = firstThread.messages[0];
+      discordClient.simulateButtonClick(`attach:sess-1:accept`, { messageId: firstMessage.id });
       expect(findBySessionId('sess-1').status).toBe('active');
 
       const secondRes = await postAttach(port, {
@@ -166,7 +166,7 @@ describe('POST /attach', () => {
     }
   });
 
-  it('reacting ✅ promotes the session to active, and permission requests then route to its thread', async () => {
+  it('tapping Accept promotes the session to active, and permission requests then route to its thread', async () => {
     const { writeConfig } = await import('../src/config.js');
     writeConfig({ port: 0, token: 'bot-token', guildId: 'g1', channelId: 'chan-1' });
 
@@ -185,7 +185,7 @@ describe('POST /attach', () => {
       const thread = await discordClient.channels.fetch(threadId);
       const approvalMessage = thread.messages[0];
 
-      discordClient.simulateReaction(approvalMessage.id, '✅');
+      discordClient.simulateButtonClick('attach:sess-1:accept', { messageId: approvalMessage.id });
       expect(findBySessionId('sess-1').status).toBe('active');
 
       const responsePromise = fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
@@ -197,7 +197,8 @@ describe('POST /attach', () => {
       expect(thread.messages).toHaveLength(2);
       expect(thread.messages[1].content).toContain('echo hi');
 
-      discordClient.simulateReaction(thread.messages[1].id, '✅');
+      const permMessage = thread.messages[1];
+      discordClient.simulateButtonClick(`perm:${permMessage.id}:allow`, { messageId: permMessage.id });
       const res = await responsePromise;
       expect(await res.json()).toEqual({ decision: 'allow' });
     } finally {
@@ -205,7 +206,7 @@ describe('POST /attach', () => {
     }
   });
 
-  it('reacting ❌ discards the pending session and posts a confirmation reply; permission requests still defer', async () => {
+  it('tapping Discard discards the pending session and edits the message in place; permission requests still defer', async () => {
     const { writeConfig } = await import('../src/config.js');
     writeConfig({ port: 0, token: 'bot-token', guildId: 'g1', channelId: 'chan-1' });
 
@@ -224,14 +225,14 @@ describe('POST /attach', () => {
       const thread = await discordClient.channels.fetch(threadId);
       const approvalMessage = thread.messages[0];
 
-      discordClient.simulateReaction(approvalMessage.id, '❌');
+      discordClient.simulateButtonClick('attach:sess-1:discard', { messageId: approvalMessage.id });
 
-      // Fire-and-forget async reply inside the reaction handler.
+      // Fire-and-forget async handling inside the interaction handler.
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(findBySessionId('sess-1')).toBeNull();
-      expect(thread.messages).toHaveLength(2);
-      expect(thread.messages[1].content).toMatch(/discard/i);
+      expect(thread.messages).toHaveLength(1);
+      expect(thread.messages[0].content).toMatch(/discard/i);
 
       const res = await fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
         method: 'POST',
@@ -263,7 +264,7 @@ describe('POST /attach', () => {
       const threadA = await discordClient.channels.fetch(bodyA.threadId);
       const threadB = await discordClient.channels.fetch(bodyB.threadId);
 
-      discordClient.simulateReaction(threadA.messages[0].id, '✅');
+      discordClient.simulateButtonClick('attach:sess-a:accept', { messageId: threadA.messages[0].id });
 
       expect(findBySessionId('sess-a').status).toBe('active');
       expect(findBySessionId('sess-b').status).toBe('pending-approval');
@@ -273,7 +274,7 @@ describe('POST /attach', () => {
     }
   });
 
-  it('reacting ✅ starts the live feed (transcript path reconstructed at attach time), with no backfill of pre-existing content', async () => {
+  it('tapping Accept starts the live feed (transcript path reconstructed at attach time), with no backfill of pre-existing content', async () => {
     const { writeConfig } = await import('../src/config.js');
     writeConfig({ port: 0, token: 'bot-token', guildId: 'g1', channelId: 'chan-1' });
 
@@ -297,7 +298,7 @@ describe('POST /attach', () => {
       // Not approved yet — no feed running, so nothing should have posted beyond the approval prompt itself.
       expect(thread.messages).toHaveLength(1);
 
-      discordClient.simulateReaction(thread.messages[0].id, '✅');
+      discordClient.simulateButtonClick('attach:sess-1:accept', { messageId: thread.messages[0].id });
       await wait(50);
 
       appendFileSync(transcriptPath, `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'after approval' }] } })}\n`);
@@ -310,7 +311,7 @@ describe('POST /attach', () => {
     }
   });
 
-  it('reacting ❌ never starts a live feed for the discarded session', async () => {
+  it('tapping Discard never starts a live feed for the discarded session', async () => {
     const { writeConfig } = await import('../src/config.js');
     writeConfig({ port: 0, token: 'bot-token', guildId: 'g1', channelId: 'chan-1' });
 
@@ -325,14 +326,14 @@ describe('POST /attach', () => {
       const { threadId } = await attachRes.json();
       const thread = await discordClient.channels.fetch(threadId);
 
-      discordClient.simulateReaction(thread.messages[0].id, '❌');
+      discordClient.simulateButtonClick('attach:sess-1:discard', { messageId: thread.messages[0].id });
       await wait(50);
 
       appendFileSync(transcriptPath, `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'should never appear' }] } })}\n`);
       await wait(200);
 
-      // Only the approval prompt + the discard confirmation reply — no feed entry.
-      expect(thread.messages).toHaveLength(2);
+      // Only the approval prompt, now edited in place with the discard outcome — no feed entry, no separate reply.
+      expect(thread.messages).toHaveLength(1);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }

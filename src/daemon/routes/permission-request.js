@@ -4,6 +4,7 @@ import { postToThread } from '../../discord/threads.js';
 import { findBySessionId } from '../sessions.js';
 import { registerPending, resolvePending } from '../pending.js';
 import { formatToolInput } from '../toolCallFormat.js';
+import { buildDecisionRow, permCustomIdFor } from '../../discord/decisionButtons.js';
 
 // Comfortably under settings.json's 6h (21600s) PermissionRequest hook
 // timeout, so the daemon always resolves (as defer, worst case) before
@@ -14,7 +15,7 @@ function describeToolCall(payload) {
   const toolName = payload.tool_name ?? 'a tool call';
   const input = payload.tool_input ?? {};
   const body = formatToolInput(toolName, input);
-  return `Permission requested: **${toolName}**\n${body}\nReact ✅ to allow, ❌ to deny.`;
+  return `Permission requested: **${toolName}**\n${body}`;
 }
 
 /**
@@ -37,8 +38,10 @@ export function permissionRequestRoutes({ discordClient, safetyTimeoutMs = DEFAU
       }
 
       const message = await postToThread(discordClient, session.threadId, describeToolCall(payload));
-      await message.react('✅');
-      await message.react('❌');
+      await message.edit({
+        content: message.content,
+        components: [buildDecisionRow({ customIdFor: permCustomIdFor(message.id), allowLabel: 'Allow', denyLabel: 'Deny' })],
+      });
 
       const decision = await new Promise((resolve) => {
         const timeoutHandle = setTimeout(() => {

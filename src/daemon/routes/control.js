@@ -1,5 +1,6 @@
 import { sendJson } from '../router.js';
 import { setPaused } from '../../state.js';
+import { disableAllActiveForms } from '../../discord/askQuestionForm.js';
 
 /**
  * HTTP surface for the global pause/resume switch. Both the CLI (when the
@@ -11,6 +12,7 @@ export function controlRoutes() {
   return {
     'POST /control/pause': async (req, res) => {
       const state = await setPaused(true);
+      await disableAllActiveForms();
       sendJson(res, 200, { paused: state.paused });
     },
     'POST /control/resume': async (req, res) => {

@@ -8,7 +8,8 @@ import { notificationRoutes } from './routes/notification.js';
 import { controlRoutes } from './routes/control.js';
 import { attachRoutes } from './routes/attach.js';
 import { detachRoutes } from './routes/detach.js';
-import { registerReactionHandlers } from '../discord/reactions.js';
+import { registerInteractionHandlers } from '../discord/interactions.js';
+import { registerAskQuestionFormHandlers } from '../discord/askQuestionForm.js';
 import { registerSteeringHandlers } from '../discord/steering.js';
 import { registerSlashCommandHandlers, registerSlashCommands } from '../discord/slashCommands.js';
 import { readConfig } from '../config.js';
@@ -32,13 +33,15 @@ function resumeActiveSessions(discordClient) {
 
 /**
  * Aggregates every route module into a single "METHOD /path" -> handler map.
- * Also wires up MessageReactionAdd (permission-request resolution),
- * MessageCreate (steering), and slash command (pause/resume) handling on
+ * Also wires up InteractionCreate (permission-request/attach-approval button
+ * resolution, AskUserQuestion form button/modal resolution), MessageCreate
+ * (steering), and slash command (pause/resume) handling on
  * `deps.discordClient`, if given.
  */
 export function buildRoutes(deps = {}) {
   if (deps.discordClient) {
-    registerReactionHandlers(deps.discordClient);
+    registerInteractionHandlers(deps.discordClient);
+    registerAskQuestionFormHandlers(deps.discordClient);
     registerSteeringHandlers(deps.discordClient);
     registerSlashCommandHandlers(deps.discordClient);
   }

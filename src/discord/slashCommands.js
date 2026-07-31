@@ -1,4 +1,5 @@
 import { setPaused } from '../state.js';
+import { disableAllActiveForms } from './askQuestionForm.js';
 
 export const SLASH_COMMANDS = [
   {
@@ -26,7 +27,9 @@ function describePauseReply(paused) {
 /**
  * Wires InteractionCreate so /pause and /resume flip the same global
  * `paused` flag as the CLI and HTTP control routes (src/daemon/routes/control.js),
- * replying in place to confirm the new state.
+ * replying in place to confirm the new state. /pause also immediately
+ * disables any in-flight AskUserQuestion form (story 17) — same treatment
+ * as an inactivity expiry, just triggered by this event instead.
  */
 export function registerSlashCommandHandlers(discordClient) {
   discordClient.on('interactionCreate', async (interaction) => {
@@ -35,6 +38,7 @@ export function registerSlashCommandHandlers(discordClient) {
     if (interaction.commandName === 'pause' || interaction.commandName === 'resume') {
       const paused = interaction.commandName === 'pause';
       await setPaused(paused);
+      if (paused) await disableAllActiveForms();
       await interaction.reply(describePauseReply(paused));
     }
   });

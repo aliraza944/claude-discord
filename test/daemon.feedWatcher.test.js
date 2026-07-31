@@ -2,8 +2,9 @@ import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { mapEntryToMessages, startFeedWatcher, stopFeedWatcher, resetFeedWatchers } from '../src/daemon/feedWatcher.js';
+import { mapEntryToMessages, extractAskUserQuestionCalls, startFeedWatcher, stopFeedWatcher, resetFeedWatchers } from '../src/daemon/feedWatcher.js';
 import { createFakeDiscordClient } from './support/fakeDiscordClient.js';
+import { resetAskQuestionForms } from '../src/discord/askQuestionForm.js';
 import { setPaused } from '../src/state.js';
 import { wait } from './support/wait.js';
 
@@ -17,6 +18,7 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.CLAUDE_DISCORD_HOME;
   rmSync(stateHome, { recursive: true, force: true });
+  resetAskQuestionForms();
 });
 
 describe('daemon/feedWatcher.js mapEntryToMessages (pure)', () => {
@@ -99,6 +101,33 @@ describe('daemon/feedWatcher.js mapEntryToMessages (pure)', () => {
     const entry = { type: 'user', message: { content: [{ type: 'text', text: 'the users own prompt' }] } };
     expect(mapEntryToMessages(entry)).toEqual([]);
   });
+
+  it('skips an AskUserQuestion tool_use block — no plain feed message for it', () => {
+    const entry = {
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', name: 'AskUserQuestion', input: { questions: [{ question: 'Q?', options: [] }] } }] },
+    };
+    expect(mapEntryToMessages(entry)).toEqual([]);
+  });
+});
+
+describe('daemon/feedWatcher.js extractAskUserQuestionCalls (pure)', () => {
+  it('extracts the questions array from an AskUserQuestion tool_use block', () => {
+    const questions = [{ question: 'Pick one', multiSelect: false, options: [{ label: 'A' }] }];
+    const entry = { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'AskUserQuestion', input: { questions } }] } };
+    expect(extractAskUserQuestionCalls(entry)).toEqual([questions]);
+  });
+
+  it('returns an empty array for a non-AskUserQuestion tool_use block', () => {
+    const entry = { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'ls' } }] } };
+    expect(extractAskUserQuestionCalls(entry)).toEqual([]);
+  });
+
+  it('returns an empty array for a user entry, a sidechain entry, or malformed input', () => {
+    expect(extractAskUserQuestionCalls({ type: 'user', message: { content: [] } })).toEqual([]);
+    expect(extractAskUserQuestionCalls({ type: 'assistant', isSidechain: true, message: { content: [] } })).toEqual([]);
+    expect(extractAskUserQuestionCalls({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'AskUserQuestion', input: {} }] } })).toEqual([]);
+  });
 });
 
 describe('daemon/feedWatcher.js startFeedWatcher/stopFeedWatcher (real temp file + fake discord)', () => {
@@ -146,6 +175,47 @@ describe('daemon/feedWatcher.js startFeedWatcher/stopFeedWatcher (real temp file
     expect(thread.messages[0].content).toContain('exit 1');
     expect(thread.messages[1].content).toMatch(/error/i);
     expect(thread.messages[1].content).toContain('command failed');
+  });
+
+  it('renders an AskUserQuestion tool_use entry as an interactive form instead of a plain feed message', async () => {
+    writeFileSync(transcriptPath(), '');
+    const session = { sessionId: 'sess-1', transcriptPath: transcriptPath(), threadId: thread.id, tmuxTarget: 'tm-1' };
+    startFeedWatcher(session, discordClient, { pollMs: 20 });
+
+    appendEntry({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            name: 'AskUserQuestion',
+            input: { questions: [{ question: 'Pick a color', multiSelect: false, options: [{ label: 'Red' }, { label: 'Blue' }] }] },
+          },
+        ],
+      },
+    });
+    await wait(60);
+
+    expect(thread.messages).toHaveLength(1);
+    expect(thread.messages[0].content).toContain('Pick a color');
+    expect(thread.messages[0].components).toHaveLength(2); // 1 question row + Submit row
+  });
+
+  it('respects the global pause flag for AskUserQuestion forms too', async () => {
+    writeFileSync(transcriptPath(), '');
+    const session = { sessionId: 'sess-1', transcriptPath: transcriptPath(), threadId: thread.id, tmuxTarget: 'tm-1' };
+    startFeedWatcher(session, discordClient, { pollMs: 20 });
+
+    await setPaused(true);
+    appendEntry({
+      type: 'assistant',
+      message: {
+        content: [{ type: 'tool_use', name: 'AskUserQuestion', input: { questions: [{ question: 'Q?', multiSelect: false, options: [{ label: 'A' }] }] } }],
+      },
+    });
+    await wait(60);
+
+    expect(thread.messages).toHaveLength(0);
   });
 
   it('posts each qualifying newly appended entry to the session thread, in order', async () => {
