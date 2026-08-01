@@ -133,11 +133,17 @@ export function createFakeDiscordClient() {
     thread.id = makeId('thread');
     thread.name = name;
     thread.messages = [];
+    thread.deleted = false;
     thread.send = async (payload) => {
       const message = makeMessage(payload);
       thread.messages.push(message);
       channelsById.set(message.id, message);
       return message;
+    };
+    thread.delete = async () => {
+      thread.deleted = true;
+      channelsById.delete(thread.id);
+      return thread;
     };
     channelsById.set(thread.id, thread);
     return thread;
@@ -148,6 +154,17 @@ export function createFakeDiscordClient() {
     channel.id = channelId;
     channel.threads = {
       create: async ({ name }) => makeThread(name),
+    };
+    // Mirrors real Discord: creating a thread without a starting message
+    // posts a "started a thread" system message in the parent channel whose
+    // id is identical to the thread's id. deletedMessageIds records calls to
+    // messages.delete so tests can assert that starter message gets cleaned
+    // up alongside the thread.
+    channel.deletedMessageIds = [];
+    channel.messages = {
+      delete: async (messageId) => {
+        channel.deletedMessageIds.push(messageId);
+      },
     };
     channelsById.set(channelId, channel);
     return channel;

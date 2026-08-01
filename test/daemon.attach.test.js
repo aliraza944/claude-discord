@@ -206,7 +206,7 @@ describe('POST /attach', () => {
     }
   });
 
-  it('tapping Discard discards the pending session and edits the message in place; permission requests still defer', async () => {
+  it('tapping Discard discards the pending session and deletes its thread; permission requests still defer', async () => {
     const { writeConfig } = await import('../src/config.js');
     writeConfig({ port: 0, token: 'bot-token', guildId: 'g1', channelId: 'chan-1' });
 
@@ -222,6 +222,7 @@ describe('POST /attach', () => {
         tmuxTarget: 'main:1.0',
       });
       const { threadId } = await attachRes.json();
+      const channel = await discordClient.channels.fetch('chan-1');
       const thread = await discordClient.channels.fetch(threadId);
       const approvalMessage = thread.messages[0];
 
@@ -231,8 +232,8 @@ describe('POST /attach', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(findBySessionId('sess-1')).toBeNull();
-      expect(thread.messages).toHaveLength(1);
-      expect(thread.messages[0].content).toMatch(/discard/i);
+      expect(thread.deleted).toBe(true);
+      expect(channel.deletedMessageIds).toEqual([threadId]);
 
       const res = await fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
         method: 'POST',
@@ -332,8 +333,9 @@ describe('POST /attach', () => {
       appendFileSync(transcriptPath, `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'should never appear' }] } })}\n`);
       await wait(200);
 
-      // Only the approval prompt, now edited in place with the discard outcome — no feed entry, no separate reply.
+      // No feed entry ever posted, and the thread itself is deleted outright.
       expect(thread.messages).toHaveLength(1);
+      expect(thread.deleted).toBe(true);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }

@@ -7,8 +7,8 @@ const ATTACH_TIMEOUT_MS = 5000;
 
 /**
  * Wires the Claude Code session running in the current tmux pane up to
- * Discord, gated by ✅/❌ reaction approval. Takes no arguments — the
- * session's identity comes entirely from its own environment/cwd.
+ * Discord, gated by Accept/Discard button approval. Takes no arguments —
+ * the session's identity comes entirely from its own environment/cwd.
  * @param {{ currentPaneTarget?: typeof currentPaneTargetDefault, requestJson?: typeof httpRequest, readConfig?: typeof readConfigDefault, env?: NodeJS.ProcessEnv, cwd?: () => string }} [deps]
  */
 export async function attachCommand({
@@ -47,7 +47,7 @@ export async function attachCommand({
       console.error(`Failed to attach session: ${res.status}${body.error ? ` (${body.error})` : ''}`);
       return;
     }
-    console.log('Attach requested; awaiting approval in Discord (react ✅ to allow, ❌ to discard).');
+    console.log('Attach requested; awaiting approval in Discord (tap Accept or Discard).');
   } catch (err) {
     console.error(`Could not reach daemon at 127.0.0.1:${config.port}: ${err.message}`);
   }

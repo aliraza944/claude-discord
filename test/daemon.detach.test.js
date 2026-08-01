@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDaemonServer } from '../src/daemon/run.js';
+import { writeConfig } from '../src/config.js';
 import { createFakeDiscordClient } from './support/fakeDiscordClient.js';
 import { registerPendingApproval, attachThread, approveSession, findBySessionId } from '../src/daemon/sessions.js';
 import { resetSessions } from '../src/daemon/sessions.js';
@@ -38,10 +39,12 @@ async function postDetach(port, body) {
 }
 
 describe('POST /detach', () => {
-  it('removes an attached session by tmux target and posts a farewell message to its thread', async () => {
+  it('removes an attached session by tmux target and deletes its thread and starter message', async () => {
+    writeConfig({ port: 0, channelId: 'chan-1' });
     const discordClient = createFakeDiscordClient();
     registerPendingApproval({ sessionId: 'sess-1', projectName: 'p1', cwd: '/p1', tmuxTarget: 'tm-1' });
-    const thread = await discordClient.channels.fetch('chan-1').then((c) => c.threads.create({ name: 'p1' }));
+    const channel = await discordClient.channels.fetch('chan-1');
+    const thread = await channel.threads.create({ name: 'p1' });
     attachThread('sess-1', thread.id);
     await approveSession('sess-1');
 
@@ -55,8 +58,8 @@ describe('POST /detach', () => {
       expect(body).toMatchObject({ detached: true, sessionId: 'sess-1', threadId: thread.id });
 
       expect(findBySessionId('sess-1')).toBeNull();
-      expect(thread.messages).toHaveLength(1);
-      expect(thread.messages[0].content).toMatch(/detach/i);
+      expect(thread.deleted).toBe(true);
+      expect(channel.deletedMessageIds).toEqual([thread.id]);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
@@ -116,12 +119,12 @@ describe('POST /detach', () => {
     }
   });
 
-  it('still succeeds and removes the session even when its thread is gone and posting the farewell fails', async () => {
+  it('still succeeds and removes the session even when its thread is already gone and deleting it fails', async () => {
     const discordClient = createFakeDiscordClient();
     registerPendingApproval({ sessionId: 'sess-1', projectName: 'p1', cwd: '/p1', tmuxTarget: 'tm-1' });
-    // A threadId the fake client never created as a thread — postToThread's
-    // fetch resolves to a plain channel stub with no .send, so posting the
-    // farewell throws, simulating a real deleted/archived-thread API error.
+    // A threadId the fake client never created as a thread — deleteThread's
+    // fetch resolves to a plain channel stub with no .delete, so deleting it
+    // throws, simulating a real deleted/archived-thread API error.
     attachThread('sess-1', 'gone-thread');
     await approveSession('sess-1');
 
@@ -172,6 +175,8 @@ describe('POST /detach', () => {
       expect(findBySessionId('sess-1')).toBeNull();
       const remaining = findBySessionId('sess-2');
       expect(remaining).toMatchObject({ sessionId: 'sess-2', threadId: threadB.id, status: 'active' });
+      expect(threadA.deleted).toBe(true);
+      expect(threadB.deleted).toBe(false);
       expect(threadB.messages).toHaveLength(0);
     } finally {
       await new Promise((resolve) => server.close(resolve));
@@ -202,8 +207,9 @@ describe('POST /detach', () => {
       appendFileSync(transcriptPath, `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'after detach' }] } })}\n`);
       await wait(60);
 
-      // Only the pre-detach feed message plus the farewell message — nothing from the feed after detach.
-      expect(thread.messages.map((m) => m.content)).toEqual(['before detach', expect.stringMatching(/detach/i)]);
+      // Only the pre-detach feed message — nothing from the feed after detach, and the thread itself is gone.
+      expect(thread.messages.map((m) => m.content)).toEqual(['before detach']);
+      expect(thread.deleted).toBe(true);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }

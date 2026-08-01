@@ -1,10 +1,23 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { createFakeDiscordClient } from './support/fakeDiscordClient.js';
 import { registerInteractionHandlers } from '../src/discord/interactions.js';
 import { registerPending, resetPending } from '../src/daemon/pending.js';
-import { registerPendingApproval, resetSessions, findBySessionId } from '../src/daemon/sessions.js';
+import { registerPendingApproval, attachThread, resetSessions, findBySessionId } from '../src/daemon/sessions.js';
+import { writeConfig } from '../src/config.js';
+
+let home;
+
+beforeEach(() => {
+  home = mkdtempSync(path.join(tmpdir(), 'claude-discord-interactions-'));
+  process.env.CLAUDE_DISCORD_HOME = home;
+});
 
 afterEach(() => {
+  delete process.env.CLAUDE_DISCORD_HOME;
+  rmSync(home, { recursive: true, force: true });
   resetPending();
   resetSessions();
 });
@@ -13,7 +26,7 @@ async function postMessage(discordClient, content = 'a message') {
   const channel = await discordClient.channels.fetch('chan-1');
   const thread = await channel.threads.create({ name: 't' });
   const message = await thread.send(content);
-  return { thread, message };
+  return { channel, thread, message };
 }
 
 describe('discord/interactions.js', () => {
@@ -106,19 +119,21 @@ describe('discord/interactions.js', () => {
     expect(interaction.updates).toHaveLength(1);
   });
 
-  it('discarding an attach approval removes the session and edits the message in place, with no separate reply', async () => {
+  it('discarding an attach approval removes the session and deletes its thread and starter message, with no discard message', async () => {
+    writeConfig({ port: 0, channelId: 'chan-1' });
     const discordClient = createFakeDiscordClient();
     registerInteractionHandlers(discordClient);
 
     registerPendingApproval({ sessionId: 'sess-1', projectName: 'p', cwd: '/p', tmuxTarget: 'tm' });
-    const { thread, message } = await postMessage(discordClient, 'Attach requested for **p**');
+    const { channel, thread, message } = await postMessage(discordClient, 'Attach requested for **p**');
+    attachThread('sess-1', thread.id);
 
     discordClient.simulateButtonClick('attach:sess-1:discard', { messageId: message.id });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(findBySessionId('sess-1')).toBeNull();
-    expect(message.content).toContain('Discarded');
-    expect(thread.messages).toHaveLength(1);
+    expect(thread.deleted).toBe(true);
+    expect(channel.deletedMessageIds).toEqual([thread.id]);
   });
 
   it('ignores a non-button interaction', async () => {

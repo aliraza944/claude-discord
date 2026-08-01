@@ -2,6 +2,8 @@ import { resolvePending } from '../daemon/pending.js';
 import { approveSession, removeSession } from '../daemon/sessions.js';
 import { startFeedWatcher, stopFeedWatcher } from '../daemon/feedWatcher.js';
 import { buildDecisionRow, permCustomIdFor, attachCustomIdFor } from './decisionButtons.js';
+import { deleteThread, deleteThreadStarterMessage } from './threads.js';
+import { readConfig } from '../config.js';
 
 function appendOutcome(content, outcomeText) {
   return `${content}\n\n${outcomeText}`;
@@ -28,26 +30,36 @@ async function handlePermButton(interaction, messageId, action) {
 }
 
 async function handleAttachButton(discordClient, interaction, sessionId, action) {
-  const labels = {
-    customIdFor: attachCustomIdFor(sessionId),
-    allowAction: 'accept',
-    denyAction: 'discard',
-    allowLabel: 'Accept',
-    denyLabel: 'Discard',
-  };
-
   if (action === 'accept') {
     const session = await approveSession(sessionId);
     if (!session) return;
     if (discordClient) startFeedWatcher(session, discordClient);
-    await updateWithOutcome(interaction, { ...labels, outcomeText: '✅ **Accepted**' });
+    await updateWithOutcome(interaction, {
+      customIdFor: attachCustomIdFor(sessionId),
+      allowAction: 'accept',
+      denyAction: 'discard',
+      allowLabel: 'Accept',
+      denyLabel: 'Discard',
+      outcomeText: '✅ **Accepted**',
+    });
     return;
   }
 
   const removed = await removeSession(sessionId);
   if (!removed) return;
   stopFeedWatcher(sessionId);
-  await updateWithOutcome(interaction, { ...labels, outcomeText: '❌ **Discarded**' });
+
+  // Best-effort: the session is unregistered even if there's no discordClient
+  // to delete the thread with, or the thread/starter message is already
+  // gone. No discard message is posted — the thread (and its approval
+  // message) is deleted outright, along with the "started a thread" message
+  // Discord posts in the parent channel (deleting the thread alone doesn't
+  // remove that).
+  if (discordClient && removed.threadId) {
+    await deleteThread(discordClient, removed.threadId).catch(() => {});
+    const { channelId } = readConfig();
+    await deleteThreadStarterMessage(discordClient, channelId, removed.threadId).catch(() => {});
+  }
 }
 
 /**
