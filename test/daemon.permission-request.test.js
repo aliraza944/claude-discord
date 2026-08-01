@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDaemonServer } from '../src/daemon/run.js';
-import { createFakeDiscordClient } from './support/fakeDiscordClient.js';
+import { createFakeDiscordClient, componentText } from './support/fakeDiscordClient.js';
 import { registerPending, attachThread, promoteToActive, resetSessions } from '../src/daemon/sessions.js';
 import { resetPending } from '../src/daemon/pending.js';
 import { setPaused } from '../src/state.js';
@@ -330,6 +330,99 @@ describe('POST /hook/permission-request', () => {
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
+  });
+
+  describe('AskUserQuestion', () => {
+    const QUESTIONS = [{ question: 'Pick a color', multiSelect: false, options: [{ label: 'Red' }, { label: 'Blue' }] }];
+
+    it('posts the interactive form (not the raw Allow/Deny prompt) and holds the hook open', async () => {
+      const discordClient = createFakeDiscordClient();
+      const thread = await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
+
+      const server = await startServer(discordClient);
+      const { port } = server.address();
+
+      try {
+        const responsePromise = fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
+          method: 'POST',
+          body: JSON.stringify({ session_id: 'sess-1', tool_name: 'AskUserQuestion', tool_input: { questions: QUESTIONS } }),
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(thread.messages).toHaveLength(1);
+        const message = thread.messages[0];
+        expect(componentText(message)).toContain('Pick a color');
+        expect(componentText(message)).not.toContain('Permission requested');
+        expect(message.components).toHaveLength(5); // header, question text, question row, status, Submit row
+
+        discordClient.simulateButtonClick(`askq:${message.id}:opt:0:1`, { messageId: message.id });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        discordClient.simulateButtonClick(`askq:${message.id}:submit`, { messageId: message.id });
+
+        const res = await responsePromise;
+        expect(await res.json()).toEqual({
+          decision: 'allow',
+          updatedInput: { questions: QUESTIONS, answers: { 'Pick a color': 'Blue' } },
+        });
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
+    });
+
+    it('resolves defer, with no form, for an unregistered/paused/inactive session — same guard as any other tool', async () => {
+      const discordClient = createFakeDiscordClient();
+      const server = await startServer(discordClient);
+      const { port } = server.address();
+
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
+          method: 'POST',
+          body: JSON.stringify({ session_id: 'unknown-session', tool_name: 'AskUserQuestion', tool_input: { questions: QUESTIONS } }),
+        });
+        expect(await res.json()).toEqual({ decision: 'defer' });
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
+    });
+
+    it('resolves defer and posts a fallback message when the form is over budget', async () => {
+      const discordClient = createFakeDiscordClient();
+      const thread = await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
+      const tooMany = Array.from({ length: 5 }, (_, i) => ({ question: `Q${i}`, multiSelect: false, options: [{ label: 'A' }] }));
+
+      const server = await startServer(discordClient);
+      const { port } = server.address();
+
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
+          method: 'POST',
+          body: JSON.stringify({ session_id: 'sess-1', tool_name: 'AskUserQuestion', tool_input: { questions: tooMany } }),
+        });
+        expect(await res.json()).toEqual({ decision: 'defer' });
+        expect(thread.messages).toHaveLength(1);
+        expect(thread.messages[0].content).toMatch(/answer it locally/i);
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
+    });
+
+    it('resolves defer once the form times out unanswered', async () => {
+      const discordClient = createFakeDiscordClient();
+      await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
+
+      const server = await startServer(discordClient, { askQuestionDeps: { formTimeoutMs: 30 } });
+      const { port } = server.address();
+
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
+          method: 'POST',
+          body: JSON.stringify({ session_id: 'sess-1', tool_name: 'AskUserQuestion', tool_input: { questions: QUESTIONS } }),
+        });
+        expect(await res.json()).toEqual({ decision: 'defer' });
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
+    });
   });
 
   it('a button tap on one session thread message never resolves another session pending request', async () => {

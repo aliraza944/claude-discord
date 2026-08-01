@@ -69,30 +69,37 @@ describe('hooks/permissionRequestHook.js', () => {
     });
 
     it('POSTs the raw payload and returns the daemon decision', async () => {
-      const decision = await requestDecision({ payload: { session_id: 'sess-1', tool_name: 'Bash' }, port });
-      expect(decision).toBe('allow');
+      const result = await requestDecision({ payload: { session_id: 'sess-1', tool_name: 'Bash' }, port });
+      expect(result).toEqual({ decision: 'allow' });
     });
   });
 
   describe('formatDecisionOutput', () => {
     it('formats allow', () => {
-      expect(JSON.parse(formatDecisionOutput('allow'))).toEqual({
+      expect(JSON.parse(formatDecisionOutput({ decision: 'allow' }))).toEqual({
         hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } },
       });
     });
 
     it('formats deny', () => {
-      expect(JSON.parse(formatDecisionOutput('deny'))).toEqual({
+      expect(JSON.parse(formatDecisionOutput({ decision: 'deny' }))).toEqual({
         hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny' } },
       });
     });
 
+    it('folds updatedInput into the decision when present (e.g. an AskUserQuestion answered via Discord)', () => {
+      const updatedInput = { questions: [{ question: 'Q?' }], answers: { 'Q?': 'A' } };
+      expect(JSON.parse(formatDecisionOutput({ decision: 'allow', updatedInput }))).toEqual({
+        hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow', updatedInput } },
+      });
+    });
+
     it('returns null for defer (print nothing)', () => {
-      expect(formatDecisionOutput('defer')).toBeNull();
+      expect(formatDecisionOutput({ decision: 'defer' })).toBeNull();
     });
 
     it('returns null for any unrecognized value', () => {
-      expect(formatDecisionOutput(undefined)).toBeNull();
+      expect(formatDecisionOutput({})).toBeNull();
     });
   });
 });

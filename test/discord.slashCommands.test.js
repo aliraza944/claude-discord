@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createFakeDiscordClient } from './support/fakeDiscordClient.js';
+import { createFakeDiscordClient, componentText } from './support/fakeDiscordClient.js';
 import { registerSlashCommands, registerSlashCommandHandlers, SLASH_COMMANDS } from '../src/discord/slashCommands.js';
 import { readStateSync } from '../src/state.js';
 import { postAskUserQuestionForm, resetAskQuestionForms } from '../src/discord/askQuestionForm.js';
@@ -66,15 +66,15 @@ describe('discord/slashCommands.js', () => {
     const channel = await discordClient.channels.fetch('chan-1');
     const thread = await channel.threads.create({ name: 't' });
     const message = await postAskUserQuestionForm(discordClient, {
-      session: { threadId: thread.id, tmuxTarget: 'tm' },
+      threadId: thread.id,
       questions: [{ question: 'Pick one', multiSelect: false, options: [{ label: 'A' }] }],
     });
 
     discordClient.simulateSlashCommand('pause');
     await flushMicrotasks();
 
-    expect(message.content).toMatch(/paused/i);
-    expect(message.components[0].toJSON().components.every((c) => c.disabled)).toBe(true);
+    expect(componentText(message)).toMatch(/paused/i);
+    expect(message.components[2].toJSON().components.every((c) => c.disabled)).toBe(true);
   });
 
   it('ignores an unrelated command name', async () => {

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDaemonServer } from '../src/daemon/run.js';
 import { readStateSync, setPaused } from '../src/state.js';
-import { createFakeDiscordClient } from './support/fakeDiscordClient.js';
+import { createFakeDiscordClient, componentText } from './support/fakeDiscordClient.js';
 import { postAskUserQuestionForm, resetAskQuestionForms } from '../src/discord/askQuestionForm.js';
 
 let home;
@@ -80,14 +80,14 @@ describe('POST /control/pause and /control/resume', () => {
       const channel = await discordClient.channels.fetch('chan-1');
       const thread = await channel.threads.create({ name: 't' });
       const message = await postAskUserQuestionForm(discordClient, {
-        session: { threadId: thread.id, tmuxTarget: 'tm' },
+        threadId: thread.id,
         questions: [{ question: 'Pick one', multiSelect: false, options: [{ label: 'A' }] }],
       });
 
       await fetch(`http://127.0.0.1:${port}/control/pause`, { method: 'POST' });
 
-      expect(message.content).toMatch(/paused/i);
-      expect(message.components[0].toJSON().components.every((c) => c.disabled)).toBe(true);
+      expect(componentText(message)).toMatch(/paused/i);
+      expect(message.components[2].toJSON().components.every((c) => c.disabled)).toBe(true);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }

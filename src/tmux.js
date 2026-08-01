@@ -35,19 +35,14 @@ export async function sendText(target, text) {
 }
 
 /**
- * Types `text` into the session's pane literally, without pressing Enter —
- * the building block `keystrokeMapper.js`'s `{ text }`/`{ number }` ops need
+ * Types `text` into the session's pane literally, without pressing Enter
  * (unlike `sendText`, which always follows with Enter for plain steering).
  */
 export async function sendLiteral(target, text) {
   await execFileAsync('tmux', ['send-keys', '-t', target, '-l', '--', text]);
 }
 
-/**
- * Sends a single named key (e.g. `Down`, `Tab`, `Enter`) — the building
- * block `keystrokeMapper.js`'s `{ key }` ops need to drive Claude Code's own
- * AskUserQuestion terminal prompt one step at a time.
- */
+/** Sends a single named key (e.g. `Down`, `Tab`, `Enter`) to the pane. */
 export async function sendKey(target, key) {
   await execFileAsync('tmux', ['send-keys', '-t', target, key]);
 }

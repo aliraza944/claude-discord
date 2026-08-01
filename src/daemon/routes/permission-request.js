@@ -5,6 +5,7 @@ import { findBySessionId } from '../sessions.js';
 import { registerPending, resolvePending } from '../pending.js';
 import { formatToolInput } from '../toolCallFormat.js';
 import { buildDecisionRow, permCustomIdFor } from '../../discord/decisionButtons.js';
+import { postAskUserQuestionForm } from '../../discord/askQuestionForm.js';
 
 // Comfortably under settings.json's 6h (21600s) PermissionRequest hook
 // timeout, so the daemon always resolves (as defer, worst case) before
@@ -19,9 +20,34 @@ function describeToolCall(payload) {
 }
 
 /**
- * @param {{ discordClient?: object, safetyTimeoutMs?: number }} [deps]
+ * Posts the interactive multiselect form and resolves once it's answered
+ * (allow, with the answers folded into `updatedInput`) or abandoned — timed
+ * out, paused, or too big to render (defer, falling back to the tool's own
+ * local prompt). This *is* the delivery mechanism for AskUserQuestion: the
+ * PermissionRequest hook is the one point that genuinely blocks the tool
+ * until the daemon responds, unlike tailing the transcript (see
+ * feedWatcher.js's doc comment) which can never see the question before
+ * it's already been answered elsewhere.
+ * @param {object} discordClient
+ * @param {{ threadId: string, questions: object[] }} params
+ * @param {object} [askQuestionDeps]
  */
-export function permissionRequestRoutes({ discordClient, safetyTimeoutMs = DEFAULT_SAFETY_TIMEOUT_MS } = {}) {
+async function resolveAskUserQuestion(discordClient, { threadId, questions }, askQuestionDeps) {
+  const answers = await new Promise((resolve) => {
+    postAskUserQuestionForm(discordClient, { threadId, questions }, { ...askQuestionDeps, onDeliver: resolve })
+      .then((message) => {
+        if (!message) resolve(null); // over budget: a plain fallback message was posted instead, no form to await
+      })
+      .catch(() => resolve(null));
+  });
+
+  return answers ? { decision: 'allow', updatedInput: { questions, answers } } : { decision: 'defer' };
+}
+
+/**
+ * @param {{ discordClient?: object, safetyTimeoutMs?: number, askQuestionDeps?: object }} [deps]
+ */
+export function permissionRequestRoutes({ discordClient, safetyTimeoutMs = DEFAULT_SAFETY_TIMEOUT_MS, askQuestionDeps } = {}) {
   return {
     'POST /hook/permission-request': async (req, res) => {
       const payload = await readJsonBody(req);
@@ -34,6 +60,16 @@ export function permissionRequestRoutes({ discordClient, safetyTimeoutMs = DEFAU
       // thread yet: resolve as defer immediately, no Discord message.
       if (state.paused || !session || session.status !== 'active' || !session.threadId) {
         sendJson(res, 200, { decision: 'defer' });
+        return;
+      }
+
+      if (payload.tool_name === 'AskUserQuestion') {
+        const questions = payload.tool_input?.questions;
+        if (!Array.isArray(questions) || questions.length === 0) {
+          sendJson(res, 200, { decision: 'defer' });
+          return;
+        }
+        sendJson(res, 200, await resolveAskUserQuestion(discordClient, { threadId: session.threadId, questions }, askQuestionDeps));
         return;
       }
 

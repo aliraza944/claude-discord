@@ -22,7 +22,10 @@ export async function probeHealth({ port, requestJson = httpRequest, timeoutMs =
 /**
  * POSTs the raw hook payload to /hook/permission-request with no client-side
  * timeout — the daemon intentionally holds this open until a reaction,
- * safety timeout, pause, or unregistered-session check resolves it.
+ * safety timeout, pause, or unregistered-session check resolves it. Returns
+ * the full `{ decision, updatedInput? }` body — `updatedInput`, when
+ * present (e.g. an AskUserQuestion answered via its Discord form), carries
+ * the resolved input straight back into the tool call.
  * @param {{ payload: any, port: number, requestJson?: typeof httpRequest }} options
  */
 export async function requestDecision({ payload, port, requestJson = httpRequest }) {
@@ -30,15 +33,16 @@ export async function requestDecision({ payload, port, requestJson = httpRequest
     method: 'POST',
     body: payload,
   });
-  const body = await res.json();
-  return body.decision;
+  return res.json();
 }
 
 /** PermissionRequest only supports allow/deny; defer means printing nothing. */
-export function formatDecisionOutput(decision) {
+export function formatDecisionOutput({ decision, updatedInput } = {}) {
   if (decision !== 'allow' && decision !== 'deny') return null;
+  const behavior = { behavior: decision };
+  if (updatedInput) behavior.updatedInput = updatedInput;
   return JSON.stringify({
-    hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: decision } },
+    hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: behavior },
   });
 }
 
@@ -50,8 +54,8 @@ export async function run() {
   if (!alive) return;
 
   try {
-    const decision = await requestDecision({ payload, port: config.port });
-    const output = formatDecisionOutput(decision);
+    const result = await requestDecision({ payload, port: config.port });
+    const output = formatDecisionOutput(result);
     if (output) process.stdout.write(`${output}\n`);
   } catch {
     // treat as defer: print nothing, let Claude Code's own timeout govern.

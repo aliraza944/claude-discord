@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { createDaemonServer } from '../src/daemon/run.js';
-import { createFakeDiscordClient } from './support/fakeDiscordClient.js';
+import { createFakeDiscordClient, componentText } from './support/fakeDiscordClient.js';
 import { postAskUserQuestionForm, resetAskQuestionForms } from '../src/discord/askQuestionForm.js';
 
 afterEach(() => {
@@ -21,7 +21,7 @@ describe('AskUserQuestion form wiring through createDaemonServer', () => {
     const channel = await discordClient.channels.fetch('chan-1');
     const thread = await channel.threads.create({ name: 't' });
     const message = await postAskUserQuestionForm(discordClient, {
-      session: { threadId: thread.id, tmuxTarget: 'tm' },
+      threadId: thread.id,
       questions: [{ question: 'Pick one', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] }],
     });
 
@@ -29,6 +29,6 @@ describe('AskUserQuestion form wiring through createDaemonServer', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(interaction.updates).toHaveLength(1);
-    expect(message.content).toContain('1/1 answered');
+    expect(componentText(message)).toContain('1/1 answered');
   });
 });

@@ -1,16 +1,19 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, LabelBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, LabelBuilder, TextInputBuilder, TextInputStyle, TextDisplayBuilder, MessageFlags } from 'discord.js';
 import { postToThread } from './threads.js';
 import { initState, isComplete, answeredCount, pickOption, submitOtherModal } from './formState.js';
-import { buildKeystrokePlan, parseReviewScreen, verifyReview } from './keystrokeMapper.js';
-import { sendKey as sendKeyDefault, sendLiteral as sendLiteralDefault, capturePane as capturePaneDefault } from '../tmux.js';
 
 /**
- * Discord hard-caps a message at 5 action rows. This form renders one row
- * per question (its option buttons plus an "Other" button) and one row for
- * Submit, so at most 4 questions fit — not 5: ticket 02's "≤5 questions
- * renderable per message" was an approximation that didn't reserve a row for
- * Submit. Any call exceeding this (or with an over-wide single question,
- * see MAX_OPTIONS_PER_QUESTION) skips the Discord form entirely (story 18).
+ * Rendered as a Components V2 message (`MessageFlags.IsComponentsV2`) so
+ * each question's own text can sit directly above its own button row,
+ * rather than every question's text being stacked above every row — a
+ * plain content string plus action rows can't interleave text between rows
+ * like that. Discord hard-caps a message at 5 action rows. This form
+ * renders one row per question (its option buttons plus an "Other" button)
+ * and one row for Submit, so at most 4 questions fit — not 5: ticket 02's
+ * "≤5 questions renderable per message" was an approximation that didn't
+ * reserve a row for Submit. Any call exceeding this (or with an over-wide
+ * single question, see MAX_OPTIONS_PER_QUESTION) skips the Discord form
+ * entirely (story 18).
  */
 export const MAX_QUESTIONS_PER_FORM = 4;
 
@@ -29,15 +32,14 @@ function exceedsFormBudget(questions) {
   return questions.length > MAX_QUESTIONS_PER_FORM || questions.some((q) => q.options.length > MAX_OPTIONS_PER_QUESTION);
 }
 
-function formatHeader(questions, state) {
-  const lines = ['🙋 **Claude is asking you a question:**', ''];
-  questions.forEach((q, i) => {
-    const suffix = q.multiSelect ? ' (multi-select)' : '';
-    lines.push(`**${i + 1}. ${q.question}${suffix}**`);
-  });
-  lines.push('');
-  lines.push(`*(${answeredCount(state)}/${questions.length} answered)*`);
-  return lines.join('\n');
+function questionHeading(question, index) {
+  const suffix = question.multiSelect ? ' (multi-select)' : '';
+  return `**${index + 1}. ${question.question}${suffix}**`;
+}
+
+function statusLine(questions, state, note) {
+  const answered = `*(${answeredCount(state)}/${questions.length} answered)*`;
+  return note ? `${answered}\n\n${note}` : answered;
 }
 
 function optionButtonLabel(option, isPicked) {
@@ -80,10 +82,15 @@ function buildSubmitRow(messageId, questions, state, disabled) {
   );
 }
 
-function buildFormComponents(messageId, questions, state, disabled) {
-  const rows = questions.map((q, i) => buildQuestionRow(messageId, i, q, state.answers[i], disabled));
-  rows.push(buildSubmitRow(messageId, questions, state, disabled));
-  return rows;
+function buildFormComponents(messageId, questions, state, disabled, note) {
+  const components = [new TextDisplayBuilder().setContent('🙋 **Claude is asking you a question:**')];
+  questions.forEach((q, i) => {
+    components.push(new TextDisplayBuilder().setContent(questionHeading(q, i)));
+    components.push(buildQuestionRow(messageId, i, q, state.answers[i], disabled));
+  });
+  components.push(new TextDisplayBuilder().setContent(statusLine(questions, state, note)));
+  components.push(buildSubmitRow(messageId, questions, state, disabled));
+  return components;
 }
 
 /**
@@ -94,8 +101,7 @@ function buildFormComponents(messageId, questions, state, disabled) {
  */
 function renderMessage(messageId, questions, state, options = {}) {
   const { disabled = false, note } = options;
-  const content = note ? `${formatHeader(questions, state)}\n\n${note}` : formatHeader(questions, state);
-  return { content, components: buildFormComponents(messageId, questions, state, disabled) };
+  return { content: '', flags: MessageFlags.IsComponentsV2, components: buildFormComponents(messageId, questions, state, disabled, note) };
 }
 
 function otherModal(messageId, qIndex, question) {
@@ -112,15 +118,22 @@ function resetTimeout(entry, formTimeoutMs = DEFAULT_FORM_TIMEOUT_MS) {
   }, formTimeoutMs);
 }
 
-/** Edits `entry.message` to a disabled, noted state and drops it from the active-forms registry. Idempotent. */
+/**
+ * Edits `entry.message` to a disabled, noted state and drops it from the
+ * active-forms registry. Idempotent. Delivers `null` to the caller waiting
+ * on this form's answer (via `onDeliver`) — an expiry or a pause means no
+ * answer came through Discord, so the caller should fall back to whatever
+ * it does when a question goes unanswered here (e.g. defer to the tool's
+ * normal local prompt).
+ */
 async function disableForm(messageId, note) {
   const entry = activeForms.get(messageId);
   if (!entry) return;
   clearTimeout(entry.timeoutHandle);
   activeForms.delete(messageId);
 
-  const { content, components } = renderMessage(messageId, entry.questions, entry.state, { disabled: true, note });
-  await entry.message.edit({ content, components }).catch(() => {});
+  await entry.message.edit(renderMessage(messageId, entry.questions, entry.state, { disabled: true, note })).catch(() => {});
+  entry.onDeliver?.(null);
 }
 
 /**
@@ -136,24 +149,34 @@ export async function disableAllActiveForms(note = '⏸️ **Discord control was
  * Renders an `AskUserQuestion` call as a Discord form message, or — if it
  * has more questions/options than can be represented (see
  * MAX_QUESTIONS_PER_FORM/MAX_OPTIONS_PER_QUESTION) — posts a plain thread
- * message directing the user to answer locally instead (story 18). Returns
- * the posted form message, or null when the over-budget guard fired.
+ * message directing the user to answer locally instead (story 18), and
+ * never calls `deps.onDeliver` at all since no form was ever registered.
+ * Returns the posted form message, or null when the over-budget guard fired.
+ *
+ * `deps.onDeliver`, when the form CAN be rendered, is called exactly once
+ * with either the resolved answers object (on Submit — see `buildAnswers`)
+ * or `null` (on inactivity timeout or `/pause`). The caller awaits that
+ * callback to learn the outcome; it is not carried in this function's own
+ * return value, since the message posts immediately but the answer arrives
+ * later, asynchronously, from a Discord interaction.
  * @param {object} discordClient
- * @param {{ session: { threadId: string, tmuxTarget: string }, questions: object[] }} params
- * @param {{ formTimeoutMs?: number }} [deps]
+ * @param {{ threadId: string, questions: object[] }} params
+ * @param {{ formTimeoutMs?: number, onDeliver?: (answers: object|null) => void }} [deps]
  */
-export async function postAskUserQuestionForm(discordClient, { session, questions }, deps = {}) {
+export async function postAskUserQuestionForm(discordClient, { threadId, questions }, deps = {}) {
   if (exceedsFormBudget(questions)) {
-    await postToThread(discordClient, session.threadId, OVER_BUDGET_MESSAGE);
+    await postToThread(discordClient, threadId, OVER_BUDGET_MESSAGE);
     return null;
   }
 
   const state = initState(questions);
-  const message = await postToThread(discordClient, session.threadId, formatHeader(questions, state));
-  const { components } = renderMessage(message.id, questions, state);
-  await message.edit({ content: message.content, components });
+  // custom_ids embed the message's own id, so it must be posted once (with
+  // placeholder content) before the real form — which needs that id — can
+  // be built and swapped in via edit.
+  const message = await postToThread(discordClient, threadId, '🙋 Claude is asking you a question…');
+  await message.edit(renderMessage(message.id, questions, state));
 
-  const entry = { messageId: message.id, message, questions, state, session, timeoutHandle: null };
+  const entry = { messageId: message.id, message, questions, state, timeoutHandle: null, onDeliver: deps.onDeliver };
   activeForms.set(message.id, entry);
   resetTimeout(entry, deps.formTimeoutMs);
 
@@ -163,8 +186,7 @@ export async function postAskUserQuestionForm(discordClient, { session, question
 async function handleOptionPick(interaction, entry, qIndex, optIndex, deps) {
   entry.state = pickOption(entry.state, qIndex, optIndex);
   resetTimeout(entry, deps.formTimeoutMs);
-  const { content, components } = renderMessage(entry.messageId, entry.questions, entry.state);
-  await interaction.update({ content, components });
+  await interaction.update(renderMessage(entry.messageId, entry.questions, entry.state));
 }
 
 async function handleOtherButton(interaction, entry, qIndex) {
@@ -175,71 +197,37 @@ async function handleOtherModalSubmit(interaction, entry, qIndex, deps) {
   const text = interaction.fields.getTextInputValue('other-text');
   entry.state = submitOtherModal(entry.state, qIndex, text);
   resetTimeout(entry, deps.formTimeoutMs);
-  const { content, components } = renderMessage(entry.messageId, entry.questions, entry.state);
-  await interaction.update({ content, components });
+  await interaction.update(renderMessage(entry.messageId, entry.questions, entry.state));
 }
 
-/**
- * Executes every op up to (not including) the final Review-screen commit
- * Enter, so the pane can be captured and verified before that last,
- * irreversible keystroke is ever sent.
- */
-async function runNavigationOps(ops, target, tmuxDeps) {
-  for (const op of ops) {
-    if ('text' in op) await tmuxDeps.sendLiteral(target, op.text);
-    else if ('number' in op) await tmuxDeps.sendLiteral(target, String(op.number));
-    else await tmuxDeps.sendKey(target, op.key);
-  }
+/** One resolved answer's value, in the shape Claude Code's AskUserQuestion tool expects: a label string, or an array of labels for a multi-select. */
+function answerValue(question, answer) {
+  if (answer.type === 'other') return answer.text;
+  const labels = answer.indexes.map((i) => question.options[i].label);
+  return question.multiSelect ? labels : labels[0];
 }
 
-async function handleSubmit(discordClient, interaction, entry, tmuxDeps) {
+/** Maps a complete form's state to `{ [question text]: answer }`, the shape AskUserQuestion's tool input expects back. */
+function buildAnswers(questions, answers) {
+  const result = {};
+  questions.forEach((q, i) => {
+    result[q.question] = answerValue(q, answers[i]);
+  });
+  return result;
+}
+
+async function handleSubmit(interaction, entry) {
   if (!isComplete(entry.state)) return; // defensive: the button should already be disabled otherwise
 
   clearTimeout(entry.timeoutHandle);
   activeForms.delete(entry.messageId);
   await interaction.deferUpdate();
 
-  const { questions, state, session, messageId, message } = entry;
+  const { questions, state, messageId, message, onDeliver } = entry;
+  const answers = buildAnswers(questions, state.answers);
 
-  try {
-    const plan = buildKeystrokePlan(questions, state.answers);
-    const commitOp = plan[plan.length - 1];
-    await runNavigationOps(plan.slice(0, -1), session.tmuxTarget, tmuxDeps);
-
-    const paneText = await tmuxDeps.capturePane(session.tmuxTarget);
-    const reviewEntries = parseReviewScreen(paneText);
-    const verification = verifyReview(reviewEntries, questions, state.answers);
-
-    if (!verification.ok) {
-      const { content, components } = renderMessage(messageId, questions, state, {
-        disabled: true,
-        note: '❌ **Delivery failed — see below.**',
-      });
-      await message.edit({ content, components });
-      await postToThread(
-        discordClient,
-        session.threadId,
-        "⚠️ The terminal's review screen didn't match your answers, so nothing was submitted. The terminal prompt was left where the keystrokes stopped — please finish answering this question locally."
-      );
-      return;
-    }
-
-    await tmuxDeps.sendKey(session.tmuxTarget, commitOp.key);
-
-    const { content, components } = renderMessage(messageId, questions, state, { disabled: true, note: '✅ **Submitted.**' });
-    await message.edit({ content, components });
-  } catch (err) {
-    const { content, components } = renderMessage(messageId, questions, state, {
-      disabled: true,
-      note: '❌ **Delivery failed — see below.**',
-    });
-    await message.edit({ content, components }).catch(() => {});
-    await postToThread(
-      discordClient,
-      session.threadId,
-      `⚠️ Delivering your answers failed (${err.message}). The terminal prompt was left where the keystrokes stopped — please finish answering this question locally.`
-    ).catch(() => {});
-  }
+  await message.edit(renderMessage(messageId, questions, state, { disabled: true, note: '✅ **Submitted.**' })).catch(() => {});
+  onDeliver?.(answers);
 }
 
 /**
@@ -248,22 +236,16 @@ async function handleSubmit(discordClient, interaction, entry, tmuxDeps) {
  * only ever affects the form identified by the message id embedded in its
  * own `custom_id`, so one session's form can never resolve another's.
  * @param {object} discordClient
- * @param {{ formTimeoutMs?: number, sendKey?: typeof sendKeyDefault, sendLiteral?: typeof sendLiteralDefault, capturePane?: typeof capturePaneDefault }} [deps]
+ * @param {{ formTimeoutMs?: number }} [deps]
  */
 export function registerAskQuestionFormHandlers(discordClient, deps = {}) {
-  const tmuxDeps = {
-    sendKey: deps.sendKey ?? sendKeyDefault,
-    sendLiteral: deps.sendLiteral ?? sendLiteralDefault,
-    capturePane: deps.capturePane ?? capturePaneDefault,
-  };
-
   discordClient.on('interactionCreate', async (interaction) => {
     if (interaction.isButton?.() && interaction.customId?.startsWith('askq:')) {
       const [, messageId, kind, a, b] = interaction.customId.split(':');
       const entry = activeForms.get(messageId);
       if (!entry) return;
 
-      if (kind === 'submit') await handleSubmit(discordClient, interaction, entry, tmuxDeps);
+      if (kind === 'submit') await handleSubmit(interaction, entry);
       else if (kind === 'other') await handleOtherButton(interaction, entry, Number(a));
       else if (kind === 'opt') await handleOptionPick(interaction, entry, Number(a), Number(b), deps);
       return;

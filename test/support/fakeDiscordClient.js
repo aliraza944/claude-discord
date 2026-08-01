@@ -1,27 +1,33 @@
 import { EventEmitter } from 'node:events';
 
-const MAX_ACTION_ROWS = 5;
+// A Components V2 message (TextDisplay interleaved with ActionRows, see
+// askQuestionForm.js) can carry up to 40 top-level components — much looser
+// than the classic 5-action-rows-only cap, since most of those top-level
+// slots here are TextDisplay, not ActionRow.
+const MAX_TOP_LEVEL_COMPONENTS = 40;
 const MAX_BUTTONS_PER_ROW = 5;
 const MAX_SELECT_OPTIONS = 25;
 const MAX_MODAL_FIELDS = 5;
 
-/** Discord component type ids relevant to validation (ActionRow=1, Button=2, StringSelect=3). */
-const COMPONENT_TYPE = { ACTION_ROW: 1, BUTTON: 2, STRING_SELECT: 3 };
+/** Discord component type ids relevant to validation (ActionRow=1, Button=2, StringSelect=3, TextDisplay=10). */
+const COMPONENT_TYPE = { ACTION_ROW: 1, BUTTON: 2, STRING_SELECT: 3, TEXT_DISPLAY: 10 };
 
 /**
  * Enforces the real Discord limits this repo's forms must respect (spec.md's
- * "Seam 1" test-seam requirement): at most 5 action rows per message, a
- * select menu must be the only component in its row, at most 5 buttons
- * sharing a button row, and at most 25 options per select menu. Called on
- * every send/edit/update so a bug that would silently violate these limits
- * in production fails loudly in-test instead.
+ * "Seam 1" test-seam requirement): at most 40 top-level components, a select
+ * menu must be the only component in its row, at most 5 buttons sharing a
+ * button row, and at most 25 options per select menu. Non-ActionRow
+ * top-level components (e.g. TextDisplay) have no row-shape to check.
+ * Called on every send/edit/update so a bug that would silently violate
+ * these limits in production fails loudly in-test instead.
  */
 function validateComponents(components = []) {
-  if (components.length > MAX_ACTION_ROWS) {
-    throw new Error(`Message has ${components.length} action rows; Discord allows at most ${MAX_ACTION_ROWS}`);
+  if (components.length > MAX_TOP_LEVEL_COMPONENTS) {
+    throw new Error(`Message has ${components.length} top-level components; Discord allows at most ${MAX_TOP_LEVEL_COMPONENTS}`);
   }
   for (const row of components) {
     const json = row?.toJSON ? row.toJSON() : row;
+    if (json?.type !== COMPONENT_TYPE.ACTION_ROW) continue;
     const rowComponents = json?.components ?? [];
     const hasSelect = rowComponents.some((c) => c.type === COMPONENT_TYPE.STRING_SELECT);
     if (hasSelect && rowComponents.length > 1) {
@@ -38,6 +44,21 @@ function validateComponents(components = []) {
   }
 }
 
+/**
+ * Joins the `content` of every top-level TextDisplay component (Components
+ * V2) in a message/payload's `components`, in order — the analogue of
+ * reading `message.content` for a form built out of TextDisplayBuilder
+ * instead of a single content string. Tests use this the way they'd assert
+ * on `message.content` for a classic message.
+ */
+export function componentText(message) {
+  return (message.components ?? [])
+    .map((c) => (c?.toJSON ? c.toJSON() : c))
+    .filter((c) => c.type === COMPONENT_TYPE.TEXT_DISPLAY)
+    .map((c) => c.content)
+    .join('\n');
+}
+
 /** Enforces a modal's top-level-field cap (Label/TextDisplay components), mirroring `validateComponents` for modals. */
 function validateModal(modal) {
   const json = modal?.toJSON ? modal.toJSON() : modal;
@@ -47,10 +68,10 @@ function validateModal(modal) {
   }
 }
 
-/** Accepts either a plain string or a `{ content, components }` object, as real discord.js send/edit/update calls do. */
+/** Accepts either a plain string or a `{ content, components, flags }` object, as real discord.js send/edit/update calls do. */
 function normalizePayload(payload) {
-  if (typeof payload === 'string') return { content: payload, components: [] };
-  return { content: payload?.content ?? '', components: payload?.components ?? [] };
+  if (typeof payload === 'string') return { content: payload, components: [], flags: 0 };
+  return { content: payload?.content ?? '', components: payload?.components ?? [], flags: payload?.flags ?? 0 };
 }
 
 /**
@@ -84,12 +105,13 @@ export function createFakeDiscordClient() {
   const pendingModalsByCustomId = new Map();
 
   function makeMessage(payload) {
-    const { content, components } = normalizePayload(payload);
+    const { content, components, flags } = normalizePayload(payload);
     validateComponents(components);
     const message = new EventEmitter();
     message.id = makeId('msg');
     message.content = content;
     message.components = components;
+    message.flags = flags;
     message.reactions = [];
     message.react = async (emoji) => {
       message.reactions.push(emoji);
@@ -100,6 +122,7 @@ export function createFakeDiscordClient() {
       validateComponents(normalized.components);
       message.content = normalized.content;
       message.components = normalized.components;
+      message.flags = normalized.flags;
       return message;
     };
     return message;
@@ -196,6 +219,7 @@ export function createFakeDiscordClient() {
       if (interaction.message) {
         interaction.message.content = normalized.content;
         interaction.message.components = normalized.components;
+        interaction.message.flags = normalized.flags;
       }
     };
     interaction.deferUpdate = async () => {
@@ -257,6 +281,7 @@ export function createFakeDiscordClient() {
       if (interaction.message) {
         interaction.message.content = normalized.content;
         interaction.message.components = normalized.components;
+        interaction.message.flags = normalized.flags;
       }
     };
     interaction.deferUpdate = async () => {
