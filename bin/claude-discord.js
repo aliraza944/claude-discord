@@ -15,7 +15,7 @@ import {
 } from '../src/cli/commands/daemon.js';
 
 const program = new Command();
-program.name('claude-discord').description('Two-way Discord control for Claude Code sessions');
+program.name('discord').description('Two-way Discord control for Claude Code sessions');
 
 program
   .command('status')

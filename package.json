@@ -4,7 +4,7 @@
   "description": "Two-way Discord control for Claude Code sessions",
   "type": "module",
   "bin": {
-    "claude-discord": "./bin/claude-discord.js",
+    "discord": "./bin/claude-discord.js",
     "claude-discord-hook": "./bin/claude-discord-hook.js"
   },
   "engines": {

@@ -10,17 +10,20 @@ approve/deny permission prompts and steer idle sessions from your phone.
 npm install -g .
 ```
 
-This installs two bins: `claude-discord` (the CLI) and `claude-discord-hook`
+This installs two bins: `discord` (the CLI) and `claude-discord-hook`
 (invoked by Claude Code's hook system — you won't run it directly).
 
 ## Quick start
 
 ```sh
-claude-discord init            # configure bot token / guild / channel, install hooks
-claude-discord daemon start    # start the background daemon
-claude-discord status          # confirm it's running, unpaused, and the bot is online
-claude-discord start ~/some/project   # launch a session in tmux, wired to Discord
+discord init            # configure bot token / guild / channel, install hooks
+discord status           # confirm it's running, unpaused, and the bot is online
+discord start ~/some/project   # launch a session in tmux, wired to Discord
 ```
+
+`discord attach` checks whether the daemon is already running and starts it
+automatically if not, so you generally don't need to run
+`discord daemon start` yourself before attaching a session.
 
 ## Config and state
 
@@ -36,17 +39,18 @@ this project's own tests, and available if you want an isolated setup).
 ## Daemon lifecycle
 
 ```sh
-claude-discord daemon start   # spawn the daemon, detached, in the background
-claude-discord daemon status  # running / not running
-claude-discord daemon stop    # SIGTERM the daemon
-claude-discord daemon logs    # print daemon.log
+discord daemon start   # spawn the daemon, detached, in the background
+discord daemon status  # running / not running
+discord daemon stop    # SIGTERM the daemon
+discord daemon logs    # print daemon.log
 ```
 
 ## Auto-start on login (optional)
 
-`claude-discord daemon start` isn't installed as a service automatically —
-if you want it running after every login, create a `systemd --user` unit
-yourself:
+`discord daemon start` isn't installed as a service automatically — `discord
+attach` starts it on demand, but if you want it running after every login
+regardless (e.g. so `discord start` doesn't need it started first), create a
+`systemd --user` unit yourself:
 
 `~/.config/systemd/user/claude-discord.service`:
 
@@ -58,8 +62,8 @@ After=network-online.target
 [Service]
 Type=forking
 PIDFile=%h/.claude-discord/daemon.pid
-ExecStart=/usr/bin/env claude-discord daemon start
-ExecStop=/usr/bin/env claude-discord daemon stop
+ExecStart=/usr/bin/env discord daemon start
+ExecStop=/usr/bin/env discord daemon stop
 Restart=on-failure
 
 [Install]
