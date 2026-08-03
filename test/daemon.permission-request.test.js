@@ -94,7 +94,7 @@ describe('POST /hook/permission-request', () => {
       const message = thread.messages[0];
       expect(message.components).toHaveLength(1);
       const buttonLabels = message.components[0].toJSON().components.map((b) => b.label);
-      expect(buttonLabels).toEqual(['Allow', 'Deny']);
+      expect(buttonLabels).toEqual(['Allow', 'Always Allow', 'Deny']);
 
       discordClient.simulateButtonClick(`perm:${message.id}:allow`, { messageId: message.id });
 
@@ -125,6 +125,72 @@ describe('POST /hook/permission-request', () => {
 
       const res = await responsePromise;
       expect(await res.json()).toEqual({ decision: 'deny' });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('tapping Always Allow resolves allow, then silently auto-allows the identical tool call again with no new Discord message', async () => {
+    const discordClient = createFakeDiscordClient();
+    const thread = await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
+
+    const server = await startServer(discordClient);
+    const { port } = server.address();
+
+    try {
+      const firstResponse = fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
+        method: 'POST',
+        body: JSON.stringify({ session_id: 'sess-1', tool_name: 'Bash', tool_input: { command: 'ls' } }),
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(thread.messages).toHaveLength(1);
+      const message = thread.messages[0];
+
+      discordClient.simulateButtonClick(`perm:${message.id}:always`, { messageId: message.id });
+
+      expect(await (await firstResponse).json()).toEqual({ decision: 'allow' });
+      expect(message.content).toContain("Always Allowed");
+
+      const secondResponse = await fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
+        method: 'POST',
+        body: JSON.stringify({ session_id: 'sess-1', tool_name: 'Bash', tool_input: { command: 'ls' } }),
+      });
+
+      expect(await secondResponse.json()).toEqual({ decision: 'allow' });
+      // No second Discord message was posted for the auto-allowed repeat.
+      expect(thread.messages).toHaveLength(1);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('an "Always Allow" grant does not cover a different tool call in the same session', async () => {
+    const discordClient = createFakeDiscordClient();
+    const thread = await registerActiveSession(discordClient, { token: 'tok-1', sessionId: 'sess-1', projectName: 'p1' });
+
+    const server = await startServer(discordClient, { safetyTimeoutMs: 400 });
+    const { port } = server.address();
+
+    try {
+      const firstResponse = fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
+        method: 'POST',
+        body: JSON.stringify({ session_id: 'sess-1', tool_name: 'Bash', tool_input: { command: 'ls' } }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      discordClient.simulateButtonClick(`perm:${thread.messages[0].id}:always`, { messageId: thread.messages[0].id });
+      await firstResponse;
+
+      const secondResponsePromise = fetch(`http://127.0.0.1:${port}/hook/permission-request`, {
+        method: 'POST',
+        body: JSON.stringify({ session_id: 'sess-1', tool_name: 'Bash', tool_input: { command: 'rm -rf build' } }),
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(thread.messages).toHaveLength(2);
+      discordClient.simulateButtonClick(`perm:${thread.messages[1].id}:deny`, { messageId: thread.messages[1].id });
+
+      expect(await (await secondResponsePromise).json()).toEqual({ decision: 'deny' });
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }

@@ -1,4 +1,5 @@
 import { modifyState, readStateSync } from '../state.js';
+import { clearAlwaysAllowed, resetAlwaysAllowed } from './sessionAllowlist.js';
 
 /**
  * In-memory registry of Claude Code sessions the daemon knows about. A
@@ -101,6 +102,7 @@ export async function removeSession(sessionId) {
   if (!record) return null;
   bySessionId.delete(sessionId);
   if (record.token) byToken.delete(record.token);
+  clearAlwaysAllowed(sessionId);
   await persistActiveSessions();
   return record;
 }
@@ -256,4 +258,5 @@ export function findByTmuxTarget(tmuxTarget) {
 export function resetSessions() {
   byToken.clear();
   bySessionId.clear();
+  resetAlwaysAllowed();
 }

@@ -10,6 +10,11 @@ export function registerPending(messageId, entry) {
   pendingRequests.set(messageId, entry);
 }
 
+/** Read-only lookup, unlike `resolvePending` — used to inspect an entry (e.g. its toolName/toolInput) before deciding how to resolve it. */
+export function peekPending(messageId) {
+  return pendingRequests.get(messageId) ?? null;
+}
+
 /** Resolves the pending request for `messageId` only — never any other. */
 export function resolvePending(messageId, decision) {
   const entry = pendingRequests.get(messageId);

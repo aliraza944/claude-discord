@@ -1,7 +1,7 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 
 /**
- * `perm:<messageId>:allow|deny` — keyed by message id since permission
+ * `perm:<messageId>:allow|always|deny` — keyed by message id since permission
  * requests are only known by that id (pending.js's Map key) and the id
  * itself is only available after the message is first posted, so callers
  * build this row in a follow-up `message.edit()`, not the initial send.
@@ -29,5 +29,20 @@ export function buildDecisionRow({ customIdFor, allowAction = 'allow', denyActio
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(customIdFor(allowAction)).setLabel(allowLabel).setStyle(ButtonStyle.Success).setDisabled(disabled),
     new ButtonBuilder().setCustomId(customIdFor(denyAction)).setLabel(denyLabel).setStyle(ButtonStyle.Danger).setDisabled(disabled)
+  );
+}
+
+/**
+ * The three-button Allow / Always Allow / Deny row for a permission-request
+ * message — the "Always Allow" middle button mirrors Claude Code CLI's "don't
+ * ask again this session" prompt option (see sessionAllowlist.js). Only used
+ * for tool permission requests; the attach accept/discard row has no
+ * equivalent and stays on the plain two-button `buildDecisionRow`.
+ */
+export function buildPermissionDecisionRow({ customIdFor, disabled = false }) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(customIdFor('allow')).setLabel('Allow').setStyle(ButtonStyle.Success).setDisabled(disabled),
+    new ButtonBuilder().setCustomId(customIdFor('always')).setLabel('Always Allow').setStyle(ButtonStyle.Primary).setDisabled(disabled),
+    new ButtonBuilder().setCustomId(customIdFor('deny')).setLabel('Deny').setStyle(ButtonStyle.Danger).setDisabled(disabled)
   );
 }

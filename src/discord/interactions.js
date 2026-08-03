@@ -1,7 +1,8 @@
-import { resolvePending } from '../daemon/pending.js';
+import { resolvePending, peekPending } from '../daemon/pending.js';
 import { approveSession, removeSession } from '../daemon/sessions.js';
 import { startFeedWatcher, stopFeedWatcher } from '../daemon/feedWatcher.js';
-import { buildDecisionRow, permCustomIdFor, attachCustomIdFor } from './decisionButtons.js';
+import { rememberAlwaysAllow } from '../daemon/sessionAllowlist.js';
+import { buildDecisionRow, buildPermissionDecisionRow, permCustomIdFor, attachCustomIdFor } from './decisionButtons.js';
 import { deleteThread, deleteThreadStarterMessage } from './threads.js';
 import { readConfig } from '../config.js';
 
@@ -9,23 +10,35 @@ function appendOutcome(content, outcomeText) {
   return `${content}\n\n${outcomeText}`;
 }
 
-/** Edits the interaction's own message in place: appends the outcome text and redraws the row disabled. */
-async function updateWithOutcome(interaction, { customIdFor, allowAction = 'allow', denyAction = 'deny', allowLabel, denyLabel, outcomeText }) {
+/** Edits the interaction's own message in place: appends the outcome text and redraws with the given (disabled) row. */
+async function updateWithOutcome(interaction, { components, outcomeText }) {
   await interaction.update({
     content: appendOutcome(interaction.message.content, outcomeText),
-    components: [buildDecisionRow({ customIdFor, allowAction, denyAction, allowLabel, denyLabel, disabled: true })],
+    components,
   });
 }
 
+/**
+ * 'always' behaves like 'allow' for this call, plus it remembers the exact
+ * tool_name/tool_input on the pending entry so this same call auto-resolves
+ * without a Discord round-trip for the rest of the session (see
+ * sessionAllowlist.js). The entry must be peeked before `resolvePending`
+ * deletes it.
+ */
 async function handlePermButton(interaction, messageId, action) {
-  const decision = action === 'allow' ? 'allow' : 'deny';
+  const decision = action === 'deny' ? 'deny' : 'allow';
+
+  if (action === 'always') {
+    const entry = peekPending(messageId);
+    if (entry) rememberAlwaysAllow(entry.sessionId, entry.toolName, entry.toolInput);
+  }
+
   if (!resolvePending(messageId, decision)) return;
 
+  const outcomeText = decision === 'deny' ? '❌ **Denied**' : action === 'always' ? "✅ **Always Allowed** (won't ask again this session)" : '✅ **Allowed**';
   await updateWithOutcome(interaction, {
-    customIdFor: permCustomIdFor(messageId),
-    allowLabel: 'Allow',
-    denyLabel: 'Deny',
-    outcomeText: decision === 'allow' ? '✅ **Allowed**' : '❌ **Denied**',
+    components: [buildPermissionDecisionRow({ customIdFor: permCustomIdFor(messageId), disabled: true })],
+    outcomeText,
   });
 }
 
@@ -35,11 +48,16 @@ async function handleAttachButton(discordClient, interaction, sessionId, action)
     if (!session) return;
     if (discordClient) startFeedWatcher(session, discordClient);
     await updateWithOutcome(interaction, {
-      customIdFor: attachCustomIdFor(sessionId),
-      allowAction: 'accept',
-      denyAction: 'discard',
-      allowLabel: 'Accept',
-      denyLabel: 'Discard',
+      components: [
+        buildDecisionRow({
+          customIdFor: attachCustomIdFor(sessionId),
+          allowAction: 'accept',
+          denyAction: 'discard',
+          allowLabel: 'Accept',
+          denyLabel: 'Discard',
+          disabled: true,
+        }),
+      ],
       outcomeText: '✅ **Accepted**',
     });
     return;

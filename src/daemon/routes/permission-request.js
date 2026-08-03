@@ -4,8 +4,9 @@ import { postToThread } from '../../discord/threads.js';
 import { findBySessionId } from '../sessions.js';
 import { registerPending, resolvePending } from '../pending.js';
 import { formatToolInput } from '../toolCallFormat.js';
-import { buildDecisionRow, permCustomIdFor } from '../../discord/decisionButtons.js';
+import { buildPermissionDecisionRow, permCustomIdFor } from '../../discord/decisionButtons.js';
 import { postAskUserQuestionForm } from '../../discord/askQuestionForm.js';
+import { isAlwaysAllowed } from '../sessionAllowlist.js';
 
 // Comfortably under settings.json's 6h (21600s) PermissionRequest hook
 // timeout, so the daemon always resolves (as defer, worst case) before
@@ -73,10 +74,18 @@ export function permissionRequestRoutes({ discordClient, safetyTimeoutMs = DEFAU
         return;
       }
 
+      // A prior "Always Allow" tap this session for this exact tool call:
+      // resolve silently, with no Discord round-trip at all — mirrors Claude
+      // Code CLI's "don't ask again this session" prompt option.
+      if (isAlwaysAllowed(sessionId, payload.tool_name, payload.tool_input)) {
+        sendJson(res, 200, { decision: 'allow' });
+        return;
+      }
+
       const message = await postToThread(discordClient, session.threadId, describeToolCall(payload));
       await message.edit({
         content: message.content,
-        components: [buildDecisionRow({ customIdFor: permCustomIdFor(message.id), allowLabel: 'Allow', denyLabel: 'Deny' })],
+        components: [buildPermissionDecisionRow({ customIdFor: permCustomIdFor(message.id) })],
       });
 
       const decision = await new Promise((resolve) => {
@@ -86,6 +95,8 @@ export function permissionRequestRoutes({ discordClient, safetyTimeoutMs = DEFAU
 
         registerPending(message.id, {
           sessionId,
+          toolName: payload.tool_name,
+          toolInput: payload.tool_input,
           resolve: (value) => {
             clearTimeout(timeoutHandle);
             resolve(value);

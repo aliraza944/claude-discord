@@ -6,6 +6,7 @@ import { createFakeDiscordClient } from './support/fakeDiscordClient.js';
 import { registerInteractionHandlers } from '../src/discord/interactions.js';
 import { registerPending, resetPending } from '../src/daemon/pending.js';
 import { registerPendingApproval, attachThread, resetSessions, findBySessionId } from '../src/daemon/sessions.js';
+import { isAlwaysAllowed, resetAlwaysAllowed } from '../src/daemon/sessionAllowlist.js';
 import { writeConfig } from '../src/config.js';
 
 let home;
@@ -20,6 +21,7 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
   resetPending();
   resetSessions();
+  resetAlwaysAllowed();
 });
 
 async function postMessage(discordClient, content = 'a message') {
@@ -54,6 +56,40 @@ describe('discord/interactions.js', () => {
 
     discordClient.simulateButtonClick(`perm:${message.id}:deny`, { messageId: message.id });
     await expect(decision).resolves.toBe('deny');
+  });
+
+  it('maps the always action to allow, and remembers the toolName/toolInput signature for the session', async () => {
+    const discordClient = createFakeDiscordClient();
+    registerInteractionHandlers(discordClient);
+    const { message } = await postMessage(discordClient);
+
+    const decision = new Promise((resolve) => {
+      registerPending(message.id, { sessionId: 'sess-1', toolName: 'Bash', toolInput: { command: 'ls' }, resolve });
+    });
+
+    discordClient.simulateButtonClick(`perm:${message.id}:always`, { messageId: message.id });
+    await expect(decision).resolves.toBe('allow');
+    expect(isAlwaysAllowed('sess-1', 'Bash', { command: 'ls' })).toBe(true);
+    expect(isAlwaysAllowed('sess-1', 'Bash', { command: 'rm -rf /' })).toBe(false);
+  });
+
+  it('an "Always Allow" grant for a Bash command still matches when only the cosmetic description text differs', async () => {
+    const discordClient = createFakeDiscordClient();
+    registerInteractionHandlers(discordClient);
+    const { message } = await postMessage(discordClient);
+
+    const decision = new Promise((resolve) => {
+      registerPending(message.id, {
+        sessionId: 'sess-1',
+        toolName: 'Bash',
+        toolInput: { command: 'ls', description: 'List files' },
+        resolve,
+      });
+    });
+
+    discordClient.simulateButtonClick(`perm:${message.id}:always`, { messageId: message.id });
+    await expect(decision).resolves.toBe('allow');
+    expect(isAlwaysAllowed('sess-1', 'Bash', { command: 'ls', description: 'Show directory contents' })).toBe(true);
   });
 
   it('a button on one message never resolves a different message pending request', async () => {
