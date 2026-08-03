@@ -6,7 +6,7 @@ From the user's perspective: I run `claude-discord init`, enter my bot token/gui
 
 **Blocked by:** 01 — daemon lifecycle foundation
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] `src/discord/client.js` constructs a discord.js `Client` with the intents/partials needed for guild messages, message content, and message reactions.
 - [ ] `claude-discord init` prompts for bot token, guild ID, and channel ID, and writes them to `config.json`.

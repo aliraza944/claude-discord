@@ -6,7 +6,7 @@ From the user's perspective: I can install the tool, run `claude-discord daemon 
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] New Node.js ESM package with `package.json` declaring the `claude-discord` and `claude-discord-hook` bins.
 - [ ] `claude-discord-hook` bin exists as a stub that dispatches by `argv[2]` (handlers wired up in later tickets).

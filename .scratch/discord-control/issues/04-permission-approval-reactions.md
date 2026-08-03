@@ -6,7 +6,7 @@ From the user's perspective: when a tool call needs permission, the local termin
 
 **Blocked by:** 03 — session start, thread creation, and session identification
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] `src/daemon/pending.js` maintains an in-memory `Map<messageId, PendingPermissionRequest>`.
 - [ ] `src/daemon/routes/permission-request.js` holds the HTTP response open while it posts a ✅/❌-reactable message to the session's thread, then awaits a resolving reaction (or the safety timeout / paused flag / unregistered session, any of which resolve as defer).

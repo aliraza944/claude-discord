@@ -6,7 +6,7 @@ From the user's perspective: I run `claude-discord start ~/some/project` and a t
 
 **Blocked by:** 02 — Discord bot connection + init wizard
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] `src/tmux.js` wraps the real `tmux` binary (`newSession`, `sendText`, `hasSession`, `capturePane`) using `execFile` with an argv array — never `shell: true`.
 - [ ] `src/httpClient.js` provides a `fetch` wrapper accepting a per-call `AbortSignal.timeout`.

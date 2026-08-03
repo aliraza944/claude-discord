@@ -6,7 +6,7 @@ From the user's perspective: I run `claude-discord pause` (or type `/pause` in D
 
 **Blocked by:** 04 — permission approval via reactions, 05 — idle/steering via thread replies
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] `src/daemon/routes/control.js` exposes HTTP pause/resume endpoints that flip the `paused` flag in `state.js`.
 - [ ] `claude-discord pause` / `claude-discord resume` call the HTTP route when the daemon is up, and fall back to a direct read-modify-write of `state.json` when it's down.

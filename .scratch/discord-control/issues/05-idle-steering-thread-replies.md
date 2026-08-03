@@ -6,7 +6,7 @@ From the user's perspective: when a session goes idle waiting for input, a "this
 
 **Blocked by:** 03 — session start, thread creation, and session identification
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] `src/hooks/notificationHook.js` fire-and-forget POSTs the `Notification` hook payload to `/hook/notification` for matchers `agent_needs_input`, `idle_prompt`, `agent_completed`; wired into `bin/claude-discord-hook.js`'s dispatch.
 - [ ] `src/daemon/routes/notification.js` posts an FYI message to the session's thread.
