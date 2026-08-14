@@ -45,26 +45,24 @@ describe('daemon/feedWatcher.js mapEntryToMessages (pure)', () => {
     expect(mapEntryToMessages(entry)).toEqual(['Hello from Claude']);
   });
 
-  it('maps an assistant tool_use block via the shared formatter, without a react footer', () => {
+  it('maps an assistant tool_use block to a single collapsed line, name plus key argument', () => {
     const entry = {
       type: 'assistant',
       message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'echo hi' } }] },
     };
     const [message] = mapEntryToMessages(entry);
-    expect(message).toContain('Bash');
-    expect(message).toContain('```\necho hi\n```');
-    expect(message).not.toContain('React');
+    expect(message).toBe('🔧 Bash(echo hi)');
   });
 
-  it('maps a user tool_result block to its truncated text', () => {
+  it('drops a successful tool_result — no feed message for it', () => {
     const entry = {
       type: 'user',
       message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'command output' }] },
     };
-    expect(mapEntryToMessages(entry)).toEqual([expect.stringContaining('command output')]);
+    expect(mapEntryToMessages(entry)).toEqual([]);
   });
 
-  it('visually flags an is_error tool_result', () => {
+  it('flags an is_error tool_result with a single-line error message', () => {
     const entry = {
       type: 'user',
       message: { content: [{ type: 'tool_result', is_error: true, content: 'boom' }] },
@@ -74,11 +72,13 @@ describe('daemon/feedWatcher.js mapEntryToMessages (pure)', () => {
     expect(message).toContain('boom');
   });
 
-  it('renders a tool_result with array-of-text-block content by joining the text', () => {
+  it('renders an is_error tool_result with array-of-text-block content by joining the text', () => {
     const entry = {
       type: 'user',
       message: {
-        content: [{ type: 'tool_result', content: [{ type: 'text', text: 'part one' }, { type: 'text', text: 'part two' }] }],
+        content: [
+          { type: 'tool_result', is_error: true, content: [{ type: 'text', text: 'part one' }, { type: 'text', text: 'part two' }] },
+        ],
       },
     };
     const [message] = mapEntryToMessages(entry);
@@ -86,10 +86,10 @@ describe('daemon/feedWatcher.js mapEntryToMessages (pure)', () => {
     expect(message).toContain('part two');
   });
 
-  it('renders a generic placeholder for non-text tool_result content instead of failing', () => {
+  it('renders a generic placeholder for non-text is_error tool_result content instead of failing', () => {
     const entry = {
       type: 'user',
-      message: { content: [{ type: 'tool_result', content: [{ type: 'image', source: { data: 'abc' } }] }] },
+      message: { content: [{ type: 'tool_result', is_error: true, content: [{ type: 'image', source: { data: 'abc' } }] }] },
     };
     const [message] = mapEntryToMessages(entry);
     expect(message).toMatch(/non-text/i);

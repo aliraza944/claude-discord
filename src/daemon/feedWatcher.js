@@ -1,10 +1,13 @@
 import { readStateSync } from '../state.js';
 import { postToThread } from '../discord/threads.js';
 import { createTranscriptTail } from './transcriptTail.js';
-import { formatToolInput, truncate } from './toolCallFormat.js';
+import { summarizeToolCall, truncate } from './toolCallFormat.js';
 
 /** In-memory Map<sessionId, tailHandle> of running feed watchers — one per active session. */
 const watchersBySessionId = new Map();
+
+/** Max length of a collapsed tool-error line — kept short since, unlike `formatToolInput`, there's no way to reveal more. */
+const MAX_ERROR_LENGTH = 200;
 
 function stringifyToolResultContent(content) {
   if (typeof content === 'string') return content;
@@ -21,13 +24,14 @@ function formatAssistantText(block) {
 
 function formatToolUseBlock(block) {
   const toolName = block.name ?? 'a tool call';
-  return `🔧 **${toolName}**\n${formatToolInput(toolName, block.input ?? {})}`;
+  return `🔧 ${summarizeToolCall(toolName, block.input ?? {})}`;
 }
 
-function formatToolResultBlock(block) {
+function formatToolErrorBlock(block) {
   const text = stringifyToolResultContent(block.content) ?? '[non-text tool result]';
-  const prefix = block.is_error ? '⚠️ **Tool error**\n' : '';
-  return `${prefix}\`\`\`\n${truncate(text)}\n\`\`\``;
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  const capped = oneLine.length <= MAX_ERROR_LENGTH ? oneLine : `${oneLine.slice(0, MAX_ERROR_LENGTH)}…`;
+  return `⚠️ **Tool error** — ${capped}`;
 }
 
 /**
@@ -35,8 +39,11 @@ function formatToolResultBlock(block) {
  * strings, per spec.md's "Entry filtering and mapping": subagent
  * (`isSidechain`) entries and non-`user`/`assistant` lines are dropped
  * entirely; `thinking` blocks are skipped; `assistant` `text`/`tool_use`
- * blocks and `user` `tool_result` blocks each produce one message. An
- * `AskUserQuestion` tool_use block is skipped here too — it's handled
+ * blocks each produce one message, collapsed to a single line for
+ * `tool_use`. `user` `tool_result` blocks only produce a message when
+ * `is_error` is set — a successful result is implied by the next line in the
+ * feed, so it's dropped rather than posted. An `AskUserQuestion` tool_use
+ * block is skipped here too — it's handled
  * synchronously by the `PermissionRequest` hook route (see
  * daemon/routes/permission-request.js), not by tailing the transcript: this
  * file's writes are batched at turn boundaries rather than flushed live per
@@ -57,8 +64,8 @@ export function mapEntryToMessages(entry) {
     if (entry.type === 'assistant') {
       if (block?.type === 'text') messages.push(formatAssistantText(block));
       else if (block?.type === 'tool_use' && block.name !== 'AskUserQuestion') messages.push(formatToolUseBlock(block));
-    } else if (block?.type === 'tool_result') {
-      messages.push(formatToolResultBlock(block));
+    } else if (block?.type === 'tool_result' && block.is_error) {
+      messages.push(formatToolErrorBlock(block));
     }
   }
   return messages;

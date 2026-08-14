@@ -51,3 +51,38 @@ export function formatToolInput(toolName, input) {
   const describe = DESCRIBERS[toolName] ?? describeGeneric;
   return describe(input ?? {});
 }
+
+/** Max length of the key argument shown in a `summarizeToolCall` line. */
+const MAX_ARG_LENGTH = 100;
+
+function truncateArg(text) {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  return oneLine.length <= MAX_ARG_LENGTH ? oneLine : `${oneLine.slice(0, MAX_ARG_LENGTH)}…`;
+}
+
+function firstStringValue(input) {
+  return Object.values(input).find((value) => typeof value === 'string') ?? null;
+}
+
+const KEY_ARG_EXTRACTORS = {
+  Bash: (input) => input.command,
+  Edit: (input) => input.file_path,
+  MultiEdit: (input) => input.file_path,
+  Write: (input) => input.file_path,
+};
+
+/**
+ * One-line summary of a tool call, mirroring Claude Code CLI's own default
+ * tool-call line (e.g. `Read(src/index.js)`): tool name plus a single
+ * identifying argument. Tools without a dedicated extractor (including every
+ * MCP tool) fall back to the first string-valued field in the input. Used by
+ * the feed watcher, which shows only this line — unlike `formatToolInput`,
+ * there's no way to reveal the full diff/content/JSON behind it.
+ */
+export function summarizeToolCall(toolName, input) {
+  const safeInput = input ?? {};
+  const extractor = KEY_ARG_EXTRACTORS[toolName];
+  const keyArg = extractor ? extractor(safeInput) : firstStringValue(safeInput);
+  if (typeof keyArg !== 'string' || keyArg.length === 0) return toolName;
+  return `${toolName}(${truncateArg(keyArg)})`;
+}
