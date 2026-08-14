@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { truncate, formatToolInput, MAX_PREVIEW_LENGTH } from '../src/daemon/toolCallFormat.js';
+import { truncate, formatToolInput, summarizeToolCall, MAX_PREVIEW_LENGTH } from '../src/daemon/toolCallFormat.js';
 
 describe('daemon/toolCallFormat.js', () => {
   it('leaves short text untouched', () => {
@@ -54,5 +54,34 @@ describe('daemon/toolCallFormat.js', () => {
   it('falls back to generic JSON rendering for a missing/unknown tool name', () => {
     const out = formatToolInput(undefined, { foo: 'bar' });
     expect(out).toContain('"foo": "bar"');
+  });
+});
+
+describe('daemon/toolCallFormat.js summarizeToolCall', () => {
+  it('renders Bash as tool name plus the command', () => {
+    expect(summarizeToolCall('Bash', { command: 'npm test' })).toBe('Bash(npm test)');
+  });
+
+  it('renders Edit/MultiEdit/Write as tool name plus the file path', () => {
+    expect(summarizeToolCall('Edit', { file_path: 'src/foo.js' })).toBe('Edit(src/foo.js)');
+    expect(summarizeToolCall('MultiEdit', { file_path: 'src/foo.js' })).toBe('MultiEdit(src/foo.js)');
+    expect(summarizeToolCall('Write', { file_path: 'src/foo.js' })).toBe('Write(src/foo.js)');
+  });
+
+  it('falls back to the first string-valued field for tools without a dedicated extractor', () => {
+    expect(summarizeToolCall('WebFetch', { url: 'https://example.com' })).toBe('WebFetch(https://example.com)');
+  });
+
+  it('falls back to the bare tool name when no string-valued field is found', () => {
+    expect(summarizeToolCall('SomeTool', { count: 3, nested: { a: 1 } })).toBe('SomeTool');
+  });
+
+  it('truncates a long key argument to 100 chars with an ellipsis', () => {
+    const command = 'x'.repeat(200);
+    expect(summarizeToolCall('Bash', { command })).toBe(`Bash(${'x'.repeat(100)}…)`);
+  });
+
+  it('collapses whitespace/newlines in the key argument onto a single line', () => {
+    expect(summarizeToolCall('Bash', { command: 'line one\nline two' })).toBe('Bash(line one line two)');
   });
 });
