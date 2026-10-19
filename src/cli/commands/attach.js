@@ -7,7 +7,9 @@ import {
   startDaemonProcess as startDaemonProcessDefault,
 } from '../../daemon/lifecycle.js';
 
-const ATTACH_TIMEOUT_MS = 5000;
+// /attach does several sequential Discord round-trips (create thread, post,
+// add buttons) before responding, which can exceed a few seconds.
+const ATTACH_TIMEOUT_MS = 20000;
 const DAEMON_READY_TIMEOUT_MS = 15000;
 const DAEMON_READY_POLL_INTERVAL_MS = 300;
 
