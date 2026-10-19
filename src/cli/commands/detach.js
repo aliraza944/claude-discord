@@ -2,7 +2,9 @@ import { currentPaneTarget as currentPaneTargetDefault } from '../../tmux.js';
 import { readConfig as readConfigDefault } from '../../config.js';
 import { httpRequest } from '../../httpClient.js';
 
-const DETACH_TIMEOUT_MS = 5000;
+// /detach deletes the thread and its starter message (two Discord
+// round-trips) before responding, which can exceed a few seconds.
+const DETACH_TIMEOUT_MS = 20000;
 
 /**
  * Unwires the Claude Code session running in the current tmux pane from
